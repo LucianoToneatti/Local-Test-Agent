@@ -4,61 +4,115 @@ Agente local de generación automática de tests para repositorios Python, impul
 
 ## Descripción
 
-`local-test-agent` analiza el código fuente de un repositorio Python y genera automáticamente tests unitarios e de integración sin depender de servicios en la nube. Todo el procesamiento ocurre localmente, garantizando privacidad del código y funcionamiento offline.
+`Local-Test-Agent` analiza el código fuente de un repositorio Python y genera automáticamente tests unitarios e de integración sin depender de servicios en la nube. Todo el procesamiento ocurre localmente, garantizando privacidad del código y funcionamiento offline.
 
 ## Requisitos previos
 
-- **Sistema operativo:** Linux (Ubuntu 22.04+ recomendado)
+- **Sistema operativo:** Linux (probado en Debian/Ubuntu)
 - **Python:** 3.10 o superior
-- **Ollama:** instalado y corriendo localmente ([ollama.com](https://ollama.com))
-- **Modelo:** `deepseek-coder:6.7b` descargado en Ollama
-  ```bash
-  ollama pull deepseek-coder:6.7b
-  ```
+- **RAM:** mínimo 8 GB (el modelo ocupa ~4 GB en RAM con cuantización Q4)
+- **Espacio en disco:** ~4 GB para el modelo
 
 ## Instalación
 
-> Los pasos de instalación se irán completando a medida que avanza el desarrollo.
+### 1. Instalar Ollama
 
 ```bash
-# 1. Clonar el repositorio
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+Verificar que el servicio quedó activo:
+
+```bash
+ollama --version
+```
+
+Ollama corre como servicio del sistema. Si necesitás iniciarlo manualmente:
+
+```bash
+ollama serve
+```
+
+### 2. Descargar el modelo
+
+```bash
+ollama pull deepseek-coder:6.7b
+```
+
+La descarga es ~3.8 GB. Verificar que quedó disponible:
+
+```bash
+ollama list
+```
+
+Deberías ver `deepseek-coder:6.7b` en la lista.
+
+### 3. Clonar el repositorio
+
+```bash
 git clone <url-del-repo>
-cd local-test-agent
+cd Local-Test-Agent
+```
 
-# 2. Crear entorno virtual
-python -m venv venv
+### 4. Crear entorno virtual e instalar dependencias
+
+```bash
+python3 -m venv venv
 source venv/bin/activate
+```
 
-# 3. Instalar dependencias
-pip install -r requirements.txt
+> Por ahora el proyecto no tiene dependencias externas (usa solo stdlib de Python). El entorno virtual queda listo para cuando se agreguen.
 
-# 4. Configurar variables de entorno
-cp .env.example .env
-# Editar .env según sea necesario
+### 5. Verificar que todo funciona
+
+```bash
+python3 -m prompts.prompt_builder
+```
+
+Este comando construye un prompt con una función de ejemplo (`dividir`), lo envía al modelo y valida que la respuesta sea código pytest válido. Debería terminar mostrando:
+
+```
+[OK] import pytest
+[OK] def test_
+[OK] sin bloques markdown
+[OK] empieza con import/from
+```
+
+Si Ollama no está corriendo al momento de ejecutar:
+
+```bash
+# En una terminal aparte (o en background):
+ollama serve
+
+# Luego volver a correr:
+python3 -m prompts.prompt_builder
 ```
 
 ## Uso básico
 
-> El flujo de uso se documentará al completar las primeras historias de usuario.
+> El flujo completo de uso sobre un repositorio se documentará al avanzar el desarrollo.
 
 ```bash
-# Ejecutar el agente sobre un repositorio
-python agent.py --repo /ruta/al/repositorio
+# Punto de entrada principal (en desarrollo)
+python3 agent.py
 ```
 
 ## Estructura del proyecto
 
 ```
-local-test-agent/
-├── agent/              # Módulos del agente
-├── prompts/            # Templates de prompts para el LLM
-├── tests_generados/    # Tests producidos por el agente
+Local-Test-Agent/
+├── agent/                  # Módulos del agente
+│   └── llm_client.py       # Cliente HTTP para la API local de Ollama
+├── prompts/                # Templates de prompts para el LLM
+│   └── prompt_builder.py   # Construcción y limpieza de prompts
+├── tests_generados/        # Tests producidos por el agente
 │   ├── unit/
 │   └── integration/
-├── tests/              # Tests del propio agente
-├── docs/               # Documentación adicional
-├── context/            # Notas de diseño y decisiones técnicas
-├── agent.py            # Punto de entrada principal
+├── tests/                  # Tests del propio agente
+├── docs/                   # Documentación adicional
+├── context/                # Notas de diseño y decisiones técnicas
+│   └── marco_teorico_notas.md
+├── agent.py                # Punto de entrada principal
 └── README.md
 ```
 
