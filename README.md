@@ -63,19 +63,16 @@ source venv/bin/activate
 
 > Por ahora el proyecto no tiene dependencias externas (usa solo stdlib de Python). El entorno virtual queda listo para cuando se agreguen.
 
-### 5. Verificar que todo funciona
+### 5. Correr el agente sobre el repositorio de ejemplo
 
 ```bash
-python3 -m prompts.prompt_builder
+python3 agent.py --repo ./examples
 ```
 
-Este comando construye un prompt con una función de ejemplo (`dividir`), lo envía al modelo y valida que la respuesta sea código pytest válido. Debería terminar mostrando:
+El agente analiza `examples/calculadora.py`, extrae sus funciones (`sumar`, `restar`, `multiplicar`, `dividir`, `potencia`) y genera tests unitarios para cada una. El resultado se guarda en:
 
 ```
-[OK] import pytest
-[OK] def test_
-[OK] sin bloques markdown
-[OK] empieza con import/from
+tests_generados/unit/test_calculadora.py
 ```
 
 Si Ollama no está corriendo al momento de ejecutar:
@@ -85,17 +82,16 @@ Si Ollama no está corriendo al momento de ejecutar:
 ollama serve
 
 # Luego volver a correr:
-python3 -m prompts.prompt_builder
+python3 agent.py --repo ./examples
 ```
 
 ## Uso básico
 
-> El flujo completo de uso sobre un repositorio se documentará al avanzar el desarrollo.
-
 ```bash
-# Punto de entrada principal (en desarrollo)
-python3 agent.py
+python3 agent.py --repo ./examples
 ```
+
+Reemplazá `./examples` por la ruta a cualquier carpeta con archivos `.py`. El agente genera un archivo `test_<nombre>.py` por cada archivo fuente encontrado, guardados en `tests_generados/unit/`.
 
 ## Estructura del proyecto
 
