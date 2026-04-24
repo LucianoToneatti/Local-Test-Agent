@@ -10,7 +10,7 @@ Agente local de generación automática de tests para repositorios Python, impul
 
 - **Sistema operativo:** Linux (probado en Debian/Ubuntu)
 - **Python:** 3.10 o superior
-- **RAM:** mínimo 8 GB (el modelo ocupa ~4 GB en RAM con cuantización Q4)
+- **RAM:** mínimo 8 GB (el modelo ocupa ~4 GB en RAM )
 - **Espacio en disco:** ~4 GB para el modelo
 
 ## Instalación
