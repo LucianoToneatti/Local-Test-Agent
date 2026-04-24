@@ -1,76 +1,73 @@
+from calculadora import sumar
 import pytest
-from mymodule import sumar
 
-def test_sumar():
-    assert sumar(10, 2) == 12
+def test_sumar_happy_path():
+    assert sumar(2, 3) == 5
     
-def test_negative_numbers():
-    assert sumar(-5, -7) == -12
+def test_sumar_negative_numbers():
+    assert sumar(-1, -2) == -3
+
+def test_sumar_zero():
+    assert sumar(0, 0) == 0
     
-def test_zero_values():
-    assert sumar(3, 0) == 3
+def test_sumar_large_numbers():
+    assert sumar(10**8, 10**9) == 10**8 + 10**9
 
+from calculadora import restar
 import pytest
 
-def restar(a, b):
-    return a - b
+def test_restar_happy():
+    assert restar(5, 3) == 2
 
-def test_restar():
-    assert restar(5,3) == 2
-    assert restar(-1,-2) == -1
-    assert restar(0, 89) == -89
+def test_restar_negative():
+    assert restar(-10, -7) == -3
 
-import pytest
-from unittest import mock
+def test_restar_zero():
+    assert restar(7, 7) == 0
 
-def test_multiplicar():
-    # Happy path scenario
+from calculadora import multiplicar
+
+def test_multiplicar_with_positive_numbers():
     assert multiplicar(2, 3) == 6
-    
-    # Edge case where both numbers are zero
-    assert multiplicar(0, 0) == 0
-    
-    # Checking negative number handling
-    assert multiplicar(-1, -1) == 1
-    assert multiplicar(5, -2) == -10
-    
-    # Expected exception
-    with pytest.raises(TypeError):
-        multiplicar('a', 3)
+    assert multiplicar(5, 4) == 20
 
+def test_multiplicar_with_negative_numbers():
+    assert multiplicar(-1, -2) == 2
+    assert multiplicar(-3, -7) == 21
+
+def test_multiplicar_with_zero():
+    assert multiplicar(5, 0) == 0
+    assert multiplicar(0, 4) == 0
+
+from calculadora import dividir
 import pytest
-from main import dividir
 
-def test_dividir_cuando_el_divisor_es_cero():
+def test_dividir_por_cero():
     with pytest.raises(ValueError) as e:
-        dividir(10, 0)
+        dividir(1, 0)
     assert str(e.value) == "El divisor no puede ser cero."
 
-def test_dividir_con_valores_positivos():
-    resultado = dividir(20, 4)
+def test_dividir_entre_siempre():
+    resultado = dividir(10, 2)
     assert resultado == 5
 
-def test_dividir_con_valores_negativos():
-    resultado = dividir(-10, -2)
-    assert resultado == 5
-
+from calculadora import potencia
 import pytest
 
-def potencia(base, exponente):
-    return base ** exponente
-
-# Testing the happy path scenario
-def test_potencia():
-    assert potencia(2, 3) == 8
-    assert potencia(5, 2) == 25
-    assert potencia(10, 1) == 10
-
-# Testing a edge case where exponent is zero
-def test_potencia_zero_exponent():
-    assert potencia(2, 0) == 1
-    assert potencia(9, 0) == 1
-
-# Testing for negative exponent
-def test_potencia_negative_exponent():
-    assert potencia(2, -3) == 1/(2**3)
-    assert potencia(5, -2) == 1/25
+def test_potencia_basePositivaExponenteCero():
+    assert potencia(2,0) == 1
+    
+def test_potencia_basePositivaExponenteUno():
+    assert potencia(2,1) == 2
+    
+def test_potencia_basePositivaExponenteMayorQueUno():
+    assert potencia(2,3) == 8
+    
+def test_potencia_baseCeroExponentePositivo():
+    assert potencia(0,5) == 0
+    
+def test_potencia_baseNegativaExponentePar():
+    assert potencia(-2,2) == 4
+    
+def test_potencia_baseNegativaExponenteImpar():
+    assert potencia(-2,3) == -8

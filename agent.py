@@ -17,6 +17,19 @@ _ROOT = pathlib.Path(__file__).parent
 OUTPUT_DIR = _ROOT / "tests_generados" / "unit"
 
 
+_CONFTEST_TEMPLATE = """\
+import sys
+import pathlib
+
+sys.path.insert(0, "{repo_path}")
+"""
+
+
+def write_conftest(repo: pathlib.Path) -> None:
+    conftest = OUTPUT_DIR / "conftest.py"
+    conftest.write_text(_CONFTEST_TEMPLATE.format(repo_path=repo), encoding="utf-8")
+
+
 def extract_functions(source: str) -> list[tuple[str, str]]:
     """Devuelve lista de (nombre, código_fuente) para cada función de nivel top."""
     tree = ast.parse(source)
@@ -40,7 +53,7 @@ def process_file(py_file: pathlib.Path, client: LLMClient) -> pathlib.Path | Non
     blocks: list[str] = []
     for func_name, func_code in functions:
         print(f"  [*] {func_name}()")
-        prompt = PromptBuilder.build(func_code, language="python", function_name=func_name)
+        prompt = PromptBuilder.build(func_code, language="python", function_name=func_name, module_name=py_file.stem)
         try:
             raw = client.generate(prompt.user, system=prompt.system)
         except OllamaConnectionError as e:
@@ -71,6 +84,7 @@ def main() -> None:
         sys.exit(1)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    write_conftest(repo)
 
     client = LLMClient()
     if not client.is_available():

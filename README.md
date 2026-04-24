@@ -112,6 +112,35 @@ Local-Test-Agent/
 └── README.md
 ```
 
+## Verificar los tests generados
+
+Después de ejecutar el agente, los tests quedan en `tests_generados/unit/`. Para correrlos con pytest:
+
+### 1. Instalar pytest (si no está instalado)
+
+```bash
+pip install pytest
+```
+
+### 2. Correr los tests generados
+
+```bash
+pytest tests_generados/unit/test_calculadora.py -v
+```
+
+El flag `-v` muestra cada test individualmente con su resultado. El `conftest.py` que el agente genera automáticamente en esa carpeta se encarga de agregar el directorio del repositorio al `sys.path`, por lo que pytest puede importar los módulos bajo test sin configuración adicional.
+
+### 3. Salida esperada
+
+```
+tests_generados/unit/test_calculadora.py::test_sumar_happy_path PASSED
+tests_generados/unit/test_calculadora.py::test_sumar_negative_numbers PASSED
+...
+============= N passed in X.XXs =============
+```
+
+> Los tests son generados por un LLM y pueden contener errores lógicos ocasionales. Revisarlos antes de incorporarlos a un pipeline de CI.
+
 ## Estado del proyecto
 
 En desarrollo activo. Ver `context/marco_teorico_notas.md` para decisiones de diseño y justificaciones técnicas.
