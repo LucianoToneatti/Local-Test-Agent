@@ -27,7 +27,12 @@ class PromptTemplate:
 
     language: str = "generic"
 
-    def build(self, code: str, function_name: Optional[str] = None) -> BuiltPrompt:
+    def build(
+        self,
+        code: str,
+        function_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+    ) -> BuiltPrompt:
         raise NotImplementedError(f"Template para '{self.language}' no implementado.")
 
 
@@ -60,17 +65,24 @@ class PythonPromptTemplate(PromptTemplate):
     _USER_TEMPLATE = (
         "Write pytest tests for this Python function:\n\n"
         "{code}\n\n"
-        "Function under test: {function_name}\n\n"
+        "Function under test: {function_name}\n"
+        "Import it with: from {module_name} import {function_name}\n\n"
         "OUTPUT RULES: raw Python code only. "
         "No markdown, no backticks, no explanations. "
         "Start your response directly with 'import'."
     )
 
-    def build(self, code: str, function_name: Optional[str] = None) -> BuiltPrompt:
+    def build(
+        self,
+        code: str,
+        function_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+    ) -> BuiltPrompt:
         resolved_name = function_name or _extract_function_name(code) or "la_funcion"
         user = self._USER_TEMPLATE.format(
             code=code.strip(),
             function_name=resolved_name,
+            module_name=module_name or "module",
         )
         return BuiltPrompt(system=self._SYSTEM, user=user)
 
@@ -91,6 +103,7 @@ class PromptBuilder:
         code: str,
         language: str = "python",
         function_name: Optional[str] = None,
+        module_name: Optional[str] = None,
     ) -> BuiltPrompt:
         template = _REGISTRY.get(language.lower())
         if template is None:
@@ -98,7 +111,7 @@ class PromptBuilder:
             raise ValueError(
                 f"Lenguaje '{language}' no soportado. Disponibles: {supported}"
             )
-        return template.build(code, function_name)
+        return template.build(code, function_name, module_name)
 
     @staticmethod
     def supported_languages() -> list[str]:

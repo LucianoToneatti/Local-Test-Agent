@@ -63,19 +63,16 @@ source venv/bin/activate
 
 > Por ahora el proyecto no tiene dependencias externas (usa solo stdlib de Python). El entorno virtual queda listo para cuando se agreguen.
 
-### 5. Verificar que todo funciona
+### 5. Correr el agente sobre el repositorio de ejemplo
 
 ```bash
-python3 -m prompts.prompt_builder
+python3 agent.py --repo ./examples
 ```
 
-Este comando construye un prompt con una función de ejemplo (`dividir`), lo envía al modelo y valida que la respuesta sea código pytest válido. Debería terminar mostrando:
+El agente analiza `examples/calculadora.py`, extrae sus funciones (`sumar`, `restar`, `multiplicar`, `dividir`, `potencia`) y genera tests unitarios para cada una. El resultado se guarda en:
 
 ```
-[OK] import pytest
-[OK] def test_
-[OK] sin bloques markdown
-[OK] empieza con import/from
+tests_generados/unit/test_calculadora.py
 ```
 
 Si Ollama no está corriendo al momento de ejecutar:
@@ -85,17 +82,16 @@ Si Ollama no está corriendo al momento de ejecutar:
 ollama serve
 
 # Luego volver a correr:
-python3 -m prompts.prompt_builder
+python3 agent.py --repo ./examples
 ```
 
 ## Uso básico
 
-> El flujo completo de uso sobre un repositorio se documentará al avanzar el desarrollo.
-
 ```bash
-# Punto de entrada principal (en desarrollo)
-python3 agent.py
+python3 agent.py --repo ./examples
 ```
+
+Reemplazá `./examples` por la ruta a cualquier carpeta con archivos `.py`. El agente genera un archivo `test_<nombre>.py` por cada archivo fuente encontrado, guardados en `tests_generados/unit/`.
 
 ## Estructura del proyecto
 
@@ -115,6 +111,35 @@ Local-Test-Agent/
 ├── agent.py                # Punto de entrada principal
 └── README.md
 ```
+
+## Verificar los tests generados
+
+Después de ejecutar el agente, los tests quedan en `tests_generados/unit/`. Para correrlos con pytest:
+
+### 1. Instalar pytest (si no está instalado)
+
+```bash
+pip install pytest
+```
+
+### 2. Correr los tests generados
+
+```bash
+pytest tests_generados/unit/test_calculadora.py -v
+```
+
+El flag `-v` muestra cada test individualmente con su resultado. El `conftest.py` que el agente genera automáticamente en esa carpeta se encarga de agregar el directorio del repositorio al `sys.path`, por lo que pytest puede importar los módulos bajo test sin configuración adicional.
+
+### 3. Salida esperada
+
+```
+tests_generados/unit/test_calculadora.py::test_sumar_happy_path PASSED
+tests_generados/unit/test_calculadora.py::test_sumar_negative_numbers PASSED
+...
+============= N passed in X.XXs =============
+```
+
+> Los tests son generados por un LLM y pueden contener errores lógicos ocasionales. Revisarlos antes de incorporarlos a un pipeline de CI.
 
 ## Estado del proyecto
 
