@@ -171,3 +171,41 @@ Una vez procesados todos los archivos, `main()` retorna normalmente. Python impr
 
 - **Deuda técnica / pendientes:** soporte para estructura `src/` (v2 QUAL-02), opción para
   incluir/excluir dirs adicionales por parámetro.
+
+---
+
+### HU-04: Extractor AST
+
+- **Qué se hizo:** se creó `agent/ast_extractor.py` con la función pública `extract(files, repo_path)`
+  que analiza cada archivo `.py` usando el módulo `ast` de stdlib y devuelve un dict unificado
+  `{ruta: {functions, classes, imports}}`. Incluye detección de imports cruzados entre módulos del
+  mismo repositorio y la función `fragment()` para dividir archivos grandes en porciones ≤200 líneas
+  sin cortar unidades sintácticas a la mitad.
+
+- **Por qué `ast` en lugar de regex o lectura de texto:**
+  El módulo `ast` de Python stdlib convierte el código fuente en un Árbol de Sintaxis Abstracta (AST),
+  una representación estructurada exacta de la gramática del lenguaje. A diferencia de regex, el AST
+  entiende la jerarquía del código (qué es un cuerpo de clase, qué es un parámetro de función, qué
+  es un decorador). `ast.parse()` lanza `SyntaxError` si el archivo tiene código inválido, lo que
+  permite detectar y registrar errores de parsing sin abortar el flujo. `ast.get_docstring()` extrae
+  la docstring limpia (sin comillas) de cualquier nodo con cuerpo.
+
+- **Cómo funciona la fragmentación inteligente:**
+  Cada función y clase tiene `node.lineno` y `node.end_lineno` en el AST. La función `fragment()`
+  agrupa las unidades en lotes usando un algoritmo greedy: agrega unidades al fragmento actual mientras
+  la suma de líneas sea ≤ FRAGMENT_THRESHOLD (200). Si una unidad individual supera el umbral, forma
+  su propio fragmento (garantía de nunca partir una unidad). Este mecanismo asegura que cada fragmento
+  enviado al LLM sea autocontenido y parseable de forma independiente.
+
+- **Cómo se detectan los imports del mismo repositorio:**
+  `_extract_repo_imports()` convierte los nombres de módulos importados (ej. `pkg.mod`) a rutas
+  relativas (ej. `pkg/mod.py`) y verifica si esa ruta está en el conjunto de archivos conocidos del
+  repositorio. Solo imports que existen en el repo quedan registrados; stdlib y third-party se filtran.
+
+- **Conceptos teóricos que aplican:** Árbol de Sintaxis Abstracta (AST), algoritmo greedy de
+  particionado, patrón de diccionario unificado como contrato de datos entre módulos, manejo
+  defensivo de errores de parsing.
+
+- **Deuda técnica / pendientes:** soporte para `async def` en métodos de clase (parcialmente cubierto),
+  extracción de type hints de parámetros para prompts más ricos (v2), caché de resultados para repos
+  grandes (v2 QUAL-01).
