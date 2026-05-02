@@ -46,27 +46,36 @@ def fragment(file_info: dict, source_lines: list[str]) -> list[dict]:
     Returns:
         Lista de dicts, cada uno con 'functions' y 'classes' (subconjunto del file_info).
     """
-    # Combinar funciones y clases con su tamaño en líneas para el algoritmo greedy
+    # Combinar funciones y clases, ordenar por línea de inicio
     units = []
     for func in file_info.get('functions', []):
-        size = func.get('_end_lineno', func.get('_lineno', 1)) - func.get('_lineno', 1) + 1
-        units.append(('function', func, size))
+        units.append(('function', func))
     for cls in file_info.get('classes', []):
-        size = cls.get('_end_lineno', cls.get('_lineno', 1)) - cls.get('_lineno', 1) + 1
-        units.append(('class', cls, size))
+        units.append(('class', cls))
 
-    # Ordenar por línea de inicio
     units.sort(key=lambda u: u[1].get('_lineno', 0))
 
     if not units:
         return [{'functions': [], 'classes': []}]
+
+    # Calcular tamaños incluyendo líneas en blanco entre unidades (span hasta la siguiente)
+    total_lines = len(source_lines)
+    sizes = []
+    for i, (_, unit) in enumerate(units):
+        if i < len(units) - 1:
+            next_start = units[i + 1][1].get('_lineno', 1)
+            size = next_start - unit.get('_lineno', 1)
+        else:
+            size = total_lines - unit.get('_lineno', 1) + 1
+        sizes.append(max(size, 1))
 
     fragments = []
     current_funcs = []
     current_classes = []
     current_size = 0
 
-    for unit_type, unit, size in units:
+    for i, (unit_type, unit) in enumerate(units):
+        size = sizes[i]
         if current_size + size > FRAGMENT_THRESHOLD and (current_funcs or current_classes):
             fragments.append({'functions': current_funcs, 'classes': current_classes})
             current_funcs = []
