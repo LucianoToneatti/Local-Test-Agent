@@ -149,3 +149,25 @@ Una vez procesados todos los archivos, `main()` retorna normalmente. Python impr
 - **Conceptos teóricos que aplican:** prompt engineering, instruction-following en LLMs, principio Open/Closed (SOLID), patrón Factory, separación entre construcción del prompt y ejecución del modelo.
 
 - **Deuda técnica / pendientes:** agregar soporte para funciones con docstring (incluirla en el prompt mejora la generación), manejo de clases y métodos (no solo funciones sueltas), test unitario de `PromptBuilder` sin invocar el LLM.
+
+---
+
+### HU-03: Explorador de repositorio
+
+- **Qué se hizo:** se creó `agent/repo_explorer.py` con la función `explore(repo_path)` que
+  recorre recursivamente un directorio Python usando `os.walk`, ignora directorios del sistema
+  (`__pycache__`, `.git`, `venv`, `dist`, etc.) modificando `dirnames` in-place, y devuelve
+  una lista ordenada de rutas relativas a archivos `.py`.
+
+- **Por qué esta solución:** separación clara de responsabilidades — `repo_explorer.py` es
+  puramente filesystem, sin leer contenido de archivos. La modificación in-place de `dirnames`
+  en `os.walk` es el mecanismo estándar de Python para podar el árbol de recursión sin necesidad
+  de filtrado posterior. Las rutas relativas (no absolutas) son el contrato esperado por
+  `ast_extractor.py` y evitan acoplamiento a rutas absolutas del sistema.
+
+- **Conceptos teóricos que aplican:** `os.walk` con pruning de directorios (modificación
+  in-place de `dirnames`), `pathlib.Path.relative_to()` para normalización de rutas,
+  principio de responsabilidad única (SRP).
+
+- **Deuda técnica / pendientes:** soporte para estructura `src/` (v2 QUAL-02), opción para
+  incluir/excluir dirs adicionales por parámetro.
