@@ -34,10 +34,10 @@
 **Planes:**
 
 **Wave 1**
-1. `HU-03` — Explorador de repositorio (`agent/repo_explorer.py`) — EXPL-01, EXPL-02
+1. `HU-03` — Explorador de repositorio (`agent/repo_explorer.py`) — EXPL-01, EXPL-02 ✅ 2026-05-02
 
-**Wave 2** *(bloqueada hasta completar Wave 1)*
-2. `HU-04` — Extractor AST (`agent/ast_extractor.py`) — ANLS-01, ANLS-02, ANLS-03, EXPL-03
+**Wave 2**
+2. `HU-04` — Extractor AST (`agent/ast_extractor.py`) — ANLS-01, ANLS-02, ANLS-03, EXPL-03 ✅ 2026-05-02
 
 **Cross-cutting constraints:**
 - Solo stdlib de Python (ast, os, pathlib) — sin dependencias pip
@@ -163,12 +163,12 @@
 
 | Requisito | Fase | Estado |
 |-----------|------|--------|
-| EXPL-01 | Fase 1 | Pending |
-| EXPL-02 | Fase 1 | Pending |
-| EXPL-03 | Fase 1 | Pending |
-| ANLS-01 | Fase 1 | Pending |
-| ANLS-02 | Fase 1 | Pending |
-| ANLS-03 | Fase 1 | Pending |
+| EXPL-01 | Fase 1 | Complete ✅ |
+| EXPL-02 | Fase 1 | Complete ✅ |
+| EXPL-03 | Fase 1 | Complete ✅ |
+| ANLS-01 | Fase 1 | Complete ✅ |
+| ANLS-02 | Fase 1 | Complete ✅ |
+| ANLS-03 | Fase 1 | Complete ✅ |
 | TGEN-01 | Fase 2 | Pending |
 | TGEN-02 | Fase 2 | Pending |
 | TGEN-03 | Fase 2 | Pending |
