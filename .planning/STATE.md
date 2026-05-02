@@ -10,14 +10,14 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 ## Estado Actual
 
 **Fase:** 1 / 5
-**HU activa:** HU-03 (Explorador de repositorio)
+**Estado de fase:** ✅ Lista para ejecutar (2 planes, 2 olas)
 **Rama activa:** `feature/HU-03-HU-04-repo-explorer`
 
 ## Progreso de Fases
 
 | Fase | Nombre | Estado |
 |------|--------|--------|
-| 1 | Exploración y Análisis | 🔄 En progreso |
+| 1 | Exploración y Análisis | 📋 Planificada — lista para ejecutar |
 | 2 | Generación de Tests Unitarios | ⏳ Pendiente |
 | 3 | Generación de Tests de Integración | ⏳ Pendiente |
 | 4 | Ejecución y Autocorrección | ⏳ Pendiente |
@@ -48,6 +48,8 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 - Research: desactivado (dominio conocido)
 - Verificador: activado
 - Fase 1 contexto capturado el 2026-05-02 → `.planning/phases/01-exploracion-y-analisis/01-CONTEXT.md`
+- Fase 1 planificada el 2026-05-02 → 2 planes: `01-HU-03-PLAN.md` (wave 1), `01-HU-04-PLAN.md` (wave 2)
+- Verificación de planes: PASSED — 6/6 requisitos cubiertos, D-01..D-08 honradas
 
 ---
-*Actualizado: 2026-05-02 tras captura de contexto Fase 1*
+*Actualizado: 2026-05-02 tras planificación Fase 1*

@@ -32,8 +32,16 @@
 - ANLS-03: Fragmentación de archivos >200 líneas
 
 **Planes:**
-1. `HU-03` — Explorador de repositorio (`agent/repo_explorer.py`)
-2. `HU-04` — Extractor AST (`agent/ast_extractor.py`)
+
+**Wave 1**
+1. `HU-03` — Explorador de repositorio (`agent/repo_explorer.py`) — EXPL-01, EXPL-02
+
+**Wave 2** *(bloqueada hasta completar Wave 1)*
+2. `HU-04` — Extractor AST (`agent/ast_extractor.py`) — ANLS-01, ANLS-02, ANLS-03, EXPL-03
+
+**Cross-cutting constraints:**
+- Solo stdlib de Python (ast, os, pathlib) — sin dependencias pip
+- Commit por HU con formato `feat: HU-0X - <desc>` + update de marco_teorico_notas.md
 
 **Criterios de éxito:**
 1. `agent.py --repo ./examples` lista `examples/calculadora.py` sin incluir `__pycache__`, `.git` ni `venv`
