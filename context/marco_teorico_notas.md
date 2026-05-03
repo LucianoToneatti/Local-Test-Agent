@@ -209,3 +209,45 @@ Una vez procesados todos los archivos, `main()` retorna normalmente. Python impr
 - **Deuda técnica / pendientes:** soporte para `async def` en métodos de clase (parcialmente cubierto),
   extracción de type hints de parámetros para prompts más ricos (v2), caché de resultados para repos
   grandes (v2 QUAL-01).
+
+---
+
+### HU-05: Generador de Tests Unitarios
+
+- **Qué se hizo:** se creó `agent/test_generator.py` con la función pública
+  `generate(repo_path, ast_result)` que itera el dict de `extract()`, llama al LLM una vez
+  por función/método, valida el output con `ast.parse()` (1 reintento si falla), y escribe
+  los tests en `tests_generados/unit/test_<stem>.py` más un `conftest.py` con el `sys.path`
+  del repositorio analizado. Se agregó el parámetro opcional `class_name` a
+  `PythonPromptTemplate` y `PromptBuilder.build()` para adaptar el prompt a métodos de clase.
+
+- **Por qué LLM una vez por función (no por archivo):**
+  Enviar una función a la vez reduce el riesgo de que el modelo "olvide" funciones en un
+  archivo largo (problema de atención en modelos pequeños como 6.7b). El trade-off es
+  más llamadas al LLM, pero es aceptable para v1 donde el objetivo es cobertura, no velocidad.
+
+- **Por qué `ast.parse()` para validar el output:**
+  `ast.parse()` es la verificación mínima que garantiza que el código generado por el LLM
+  es Python sintácticamente correcto antes de escribirlo al disco. No verifica semántica
+  (el test puede fallar en runtime), pero asegura que pytest pueda al menos importar el archivo.
+  La validación semántica es responsabilidad del módulo de ejecución (HU-07/HU-08).
+
+- **Por qué slicing por `_lineno`/`_end_lineno` en lugar de re-parsear:**
+  Los atributos `_lineno` y `_end_lineno` ya están en el dict de `extract()`. Releer el
+  archivo fuente y slicear es O(n) en líneas y no requiere una segunda pasada de AST.
+  Mantiene `test_generator.py` desacoplado de `ast_extractor.py` (lo consume como dato,
+  no lo reimplementa).
+
+- **Cómo funciona el mecanismo de reintento:**
+  `_generate_block()` itera `range(2)`. En el attempt 0: genera, limpia, valida. Si
+  `ast.parse()` lanza `SyntaxError`, hace `continue` al attempt 1 (reintento). Si el
+  segundo attempt también falla, sale del loop y devuelve el comentario de error.
+  Máximo 1 reintento por función (D-06).
+
+- **Conceptos teóricos que aplican:** validación de AST como guardrail de calidad,
+  granularidad de contexto LLM (función vs. archivo), patrón de reintento acotado,
+  sys.path como mecanismo de resolución de imports en pytest.
+
+- **Deuda técnica / pendientes:** soporte para `async def` en prompts (template actual
+  no menciona async), caché de resultados para no re-llamar al LLM para funciones sin
+  cambios (v2 QUAL-01), template separado para métodos vs. funciones (v2 si se necesita).
