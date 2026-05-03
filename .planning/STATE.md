@@ -5,13 +5,13 @@
 Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 
 **Core value:** Un solo comando analiza cualquier repositorio Python y produce tests listos para pytest, completamente offline.
-**Fase actual:** Fase 2 — Generación de Tests Unitarios
+**Fase actual:** Fase 3 — Generación de Tests de Integración
 
 ## Estado Actual
 
-**Fase:** 2 / 5
-**Estado de fase:** ✅ Completa — 1/1 planes ejecutados, verificación pendiente
-**Rama activa:** `feature/HU-05-unit-test-generator`
+**Fase:** 3 / 5
+**Estado de fase:** 📋 Lista para ejecutar — 1/1 planes planificados, verificación PASSED
+**Rama activa:** `feature/HU-06-integration-test-generator`
 
 ## Progreso de Fases
 
@@ -19,7 +19,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 |------|--------|--------|
 | 1 | Exploración y Análisis | ✅ Completa |
 | 2 | Generación de Tests Unitarios | ✅ Completa |
-| 3 | Generación de Tests de Integración | ⏳ Pendiente |
+| 3 | Generación de Tests de Integración | 📋 Lista para ejecutar |
 | 4 | Ejecución y Autocorrección | ⏳ Pendiente |
 | 5 | Reporte y CLI Completa | ⏳ Pendiente |
 
@@ -54,6 +54,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 - Fase 2 contexto capturado el 2026-05-02 → `.planning/phases/02-generacion-de-tests-unitarios/02-CONTEXT.md`
 - Fase 2 planificada el 2026-05-03 → 1 plan: `02-HU-05-PLAN.md` (wave 1) — verificación PASSED (D-01..D-08 honradas, TGEN-01/02/03 cubiertos)
 - Fase 2 ejecutada el 2026-05-03 — HU-05 (12 tests agente, 35/35 ✓), 18 tests generados para calculadora.py, 4/4 criterios de éxito del roadmap cumplidos
+- Fase 3 planificada el 2026-05-03 → 1 plan: `03-HU-06-PLAN.md` (wave 1) — verificación PASSED (D-01..D-08 honradas, INTG-01/02/03 cubiertos)
 
 ---
-*Actualizado: 2026-05-03 tras planificación Fase 2*
+*Actualizado: 2026-05-03 tras planificación Fase 3*
