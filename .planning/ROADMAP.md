@@ -70,7 +70,7 @@
 **Planes:**
 
 **Wave 1**
-1. `HU-05` — Generador de tests unitarios (`agent/test_generator.py`, `prompts/prompt_builder.py`) — TGEN-01, TGEN-02, TGEN-03
+1. `HU-05` — Generador de tests unitarios (`agent/test_generator.py`, `prompts/prompt_builder.py`) — TGEN-01, TGEN-02, TGEN-03 ✅ 2026-05-03
 
 **Cross-cutting constraints:**
 - Solo stdlib de Python (ast, pathlib) más módulos del propio agente — sin dependencias pip
@@ -176,9 +176,9 @@
 | ANLS-01 | Fase 1 | Complete ✅ |
 | ANLS-02 | Fase 1 | Complete ✅ |
 | ANLS-03 | Fase 1 | Complete ✅ |
-| TGEN-01 | Fase 2 | Pending |
-| TGEN-02 | Fase 2 | Pending |
-| TGEN-03 | Fase 2 | Pending |
+| TGEN-01 | Fase 2 | Complete ✅ |
+| TGEN-02 | Fase 2 | Complete ✅ |
+| TGEN-03 | Fase 2 | Complete ✅ |
 | INTG-01 | Fase 3 | Pending |
 | INTG-02 | Fase 3 | Pending |
 | INTG-03 | Fase 3 | Pending |

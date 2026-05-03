@@ -10,7 +10,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 ## Estado Actual
 
 **Fase:** 2 / 5
-**Estado de fase:** 📋 Planificada — lista para ejecutar (1 plan, wave 1)
+**Estado de fase:** ✅ Completa — 1/1 planes ejecutados, verificación pendiente
 **Rama activa:** `feature/HU-05-unit-test-generator`
 
 ## Progreso de Fases
@@ -18,7 +18,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 | Fase | Nombre | Estado |
 |------|--------|--------|
 | 1 | Exploración y Análisis | ✅ Completa |
-| 2 | Generación de Tests Unitarios | 📋 Planificada |
+| 2 | Generación de Tests Unitarios | ✅ Completa |
 | 3 | Generación de Tests de Integración | ⏳ Pendiente |
 | 4 | Ejecución y Autocorrección | ⏳ Pendiente |
 | 5 | Reporte y CLI Completa | ⏳ Pendiente |
@@ -33,7 +33,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 
 - ✓ HU-03: Explorador de repositorio
 - ✓ HU-04: Extractor AST
-- [ ] HU-05: Generador de tests unitarios
+- ✓ HU-05: Generador de tests unitarios
 - [ ] HU-06: Generador de tests de integración
 - [ ] HU-07: Runner de tests
 - [ ] HU-08: Autocorrector
@@ -53,6 +53,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 - Fase 1 ejecutada el 2026-05-02 — HU-03 (10 tests), HU-04 (13 tests), suite completa 23/23 ✓
 - Fase 2 contexto capturado el 2026-05-02 → `.planning/phases/02-generacion-de-tests-unitarios/02-CONTEXT.md`
 - Fase 2 planificada el 2026-05-03 → 1 plan: `02-HU-05-PLAN.md` (wave 1) — verificación PASSED (D-01..D-08 honradas, TGEN-01/02/03 cubiertos)
+- Fase 2 ejecutada el 2026-05-03 — HU-05 (12 tests agente, 35/35 ✓), 18 tests generados para calculadora.py, 4/4 criterios de éxito del roadmap cumplidos
 
 ---
 *Actualizado: 2026-05-03 tras planificación Fase 2*
