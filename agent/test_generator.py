@@ -128,6 +128,7 @@ def _read_source_lines(repo: Path, rel_path: str) -> Optional[list[str]]:
 
 def _write_conftest(repo: Path) -> None:
     """Escribe conftest.py con la ruta absoluta del repo en sys.path."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     content = (
         "import sys\n"
         "import pathlib\n"
