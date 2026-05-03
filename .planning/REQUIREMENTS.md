@@ -31,9 +31,9 @@ Scope comprometido para esta iteración. Mapean a las fases del roadmap.
 
 ### Generación de Tests Unitarios
 
-- [ ] **TGEN-01**: Para cada función extraída, el agente genera al menos 2 casos de test (happy path + edge case) usando el LLM — HU-05
-- [ ] **TGEN-02**: Los tests unitarios generados son archivos `.py` válidos con formato pytest, guardados en `tests_generados/unit/test_<nombre_archivo>.py` — HU-05
-- [ ] **TGEN-03**: Cada test generado incluye un `conftest.py` que agrega el directorio del repositorio al `sys.path` — HU-05
+- ✓ **TGEN-01**: Para cada función extraída, el agente genera al menos 2 casos de test (happy path + edge case) usando el LLM — HU-05
+- ✓ **TGEN-02**: Los tests unitarios generados son archivos `.py` válidos con formato pytest, guardados en `tests_generados/unit/test_<nombre_archivo>.py` — HU-05
+- ✓ **TGEN-03**: Cada test generado incluye un `conftest.py` que agrega el directorio del repositorio al `sys.path` — HU-05
 
 ### Generación de Tests de Integración
 
