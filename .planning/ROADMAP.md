@@ -68,7 +68,14 @@
 - TGEN-03: `conftest.py` con `sys.path` configurado
 
 **Planes:**
-1. `HU-05` — Generador de tests unitarios (`agent/test_generator.py`)
+
+**Wave 1**
+1. `HU-05` — Generador de tests unitarios (`agent/test_generator.py`, `prompts/prompt_builder.py`) — TGEN-01, TGEN-02, TGEN-03
+
+**Cross-cutting constraints:**
+- Solo stdlib de Python (ast, pathlib) más módulos del propio agente — sin dependencias pip
+- LLM se llama una vez por función/método; validar output con ast.parse() antes de escribir
+- Commit con formato `feat: HU-0X - <desc>` + update de marco_teorico_notas.md
 
 **Criterios de éxito:**
 1. Sobre `examples/calculadora.py`, el generador produce `tests_generados/unit/test_calculadora.py` con al menos 10 funciones de test (2 por función × 5 funciones)

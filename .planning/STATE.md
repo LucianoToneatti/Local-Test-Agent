@@ -5,12 +5,12 @@
 Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 
 **Core value:** Un solo comando analiza cualquier repositorio Python y produce tests listos para pytest, completamente offline.
-**Fase actual:** Fase 1 — Exploración y Análisis
+**Fase actual:** Fase 2 — Generación de Tests Unitarios
 
 ## Estado Actual
 
-**Fase:** 1 / 5
-**Estado de fase:** ✅ Completada y verificada (6/6 must-haves, 23/23 tests)
+**Fase:** 2 / 5
+**Estado de fase:** 📋 Planificada — lista para ejecutar (1 plan, wave 1)
 **Rama activa:** `feature/HU-05-unit-test-generator`
 
 ## Progreso de Fases
@@ -18,7 +18,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 | Fase | Nombre | Estado |
 |------|--------|--------|
 | 1 | Exploración y Análisis | ✅ Completa |
-| 2 | Generación de Tests Unitarios | ⏳ Pendiente |
+| 2 | Generación de Tests Unitarios | 📋 Planificada |
 | 3 | Generación de Tests de Integración | ⏳ Pendiente |
 | 4 | Ejecución y Autocorrección | ⏳ Pendiente |
 | 5 | Reporte y CLI Completa | ⏳ Pendiente |
@@ -52,6 +52,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 - Verificación de planes: PASSED — 6/6 requisitos cubiertos, D-01..D-08 honradas
 - Fase 1 ejecutada el 2026-05-02 — HU-03 (10 tests), HU-04 (13 tests), suite completa 23/23 ✓
 - Fase 2 contexto capturado el 2026-05-02 → `.planning/phases/02-generacion-de-tests-unitarios/02-CONTEXT.md`
+- Fase 2 planificada el 2026-05-03 → 1 plan: `02-HU-05-PLAN.md` (wave 1) — verificación PASSED (D-01..D-08 honradas, TGEN-01/02/03 cubiertos)
 
 ---
-*Actualizado: 2026-05-02 tras ejecución Fase 1*
+*Actualizado: 2026-05-03 tras planificación Fase 2*
