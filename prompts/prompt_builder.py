@@ -72,18 +72,38 @@ class PythonPromptTemplate(PromptTemplate):
         "Start your response directly with 'import'."
     )
 
+    _USER_TEMPLATE_METHOD = (
+        "Write pytest tests for this Python method:\n\n"
+        "{code}\n\n"
+        "Method under test: {function_name} (instance method of class {class_name})\n"
+        "Import it with: from {module_name} import {class_name}\n"
+        "Instantiate the class before calling the method.\n\n"
+        "OUTPUT RULES: raw Python code only. "
+        "No markdown, no backticks, no explanations. "
+        "Start your response directly with 'import'."
+    )
+
     def build(
         self,
         code: str,
         function_name: Optional[str] = None,
         module_name: Optional[str] = None,
+        class_name: Optional[str] = None,
     ) -> BuiltPrompt:
         resolved_name = function_name or _extract_function_name(code) or "la_funcion"
-        user = self._USER_TEMPLATE.format(
-            code=code.strip(),
-            function_name=resolved_name,
-            module_name=module_name or "module",
-        )
+        if class_name:
+            user = self._USER_TEMPLATE_METHOD.format(
+                code=code.strip(),
+                function_name=resolved_name,
+                module_name=module_name or "module",
+                class_name=class_name,
+            )
+        else:
+            user = self._USER_TEMPLATE.format(
+                code=code.strip(),
+                function_name=resolved_name,
+                module_name=module_name or "module",
+            )
         return BuiltPrompt(system=self._SYSTEM, user=user)
 
 
@@ -104,6 +124,7 @@ class PromptBuilder:
         language: str = "python",
         function_name: Optional[str] = None,
         module_name: Optional[str] = None,
+        class_name: Optional[str] = None,
     ) -> BuiltPrompt:
         template = _REGISTRY.get(language.lower())
         if template is None:
@@ -111,7 +132,7 @@ class PromptBuilder:
             raise ValueError(
                 f"Lenguaje '{language}' no soportado. Disponibles: {supported}"
             )
-        return template.build(code, function_name, module_name)
+        return template.build(code, function_name, module_name, class_name)
 
     @staticmethod
     def supported_languages() -> list[str]:
