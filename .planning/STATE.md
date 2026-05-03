@@ -11,7 +11,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 
 **Fase:** 1 / 5
 **Estado de fase:** ✅ Completada y verificada (6/6 must-haves, 23/23 tests)
-**Rama activa:** `feature/HU-03-HU-04-repo-explorer`
+**Rama activa:** `feature/HU-05-unit-test-generator`
 
 ## Progreso de Fases
 
@@ -51,6 +51,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 - Fase 1 planificada el 2026-05-02 → 2 planes: `01-HU-03-PLAN.md` (wave 1), `01-HU-04-PLAN.md` (wave 2)
 - Verificación de planes: PASSED — 6/6 requisitos cubiertos, D-01..D-08 honradas
 - Fase 1 ejecutada el 2026-05-02 — HU-03 (10 tests), HU-04 (13 tests), suite completa 23/23 ✓
+- Fase 2 contexto capturado el 2026-05-02 → `.planning/phases/02-generacion-de-tests-unitarios/02-CONTEXT.md`
 
 ---
 *Actualizado: 2026-05-02 tras ejecución Fase 1*
