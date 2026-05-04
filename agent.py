@@ -11,9 +11,11 @@ import pathlib
 import sys
 
 from agent.ast_extractor import extract
+from agent.autocorrector import autocorrect
 from agent.integration_generator import generate as generate_integration
 from agent.llm_client import LLMClient, OllamaConnectionError
 from agent.repo_explorer import explore
+from agent.test_runner import run as run_tests
 from prompts.prompt_builder import PromptBuilder, clean_response
 
 _ROOT = pathlib.Path(__file__).parent
@@ -113,6 +115,27 @@ def main() -> None:
     ast_result = extract(explore(str(repo)), str(repo))
     generate_integration(str(repo), ast_result)
     print(f"[OK] tests_generados/integration/\n")
+
+    print("[*] Ejecutando tests generados...")
+    tests_dir = str(_ROOT / "tests_generados")
+    results = run_tests(tests_dir)
+
+    if results:
+        passed = sum(1 for v in results.values() if v["status"] == "passed")
+        failed = sum(1 for v in results.values() if v["status"] in ("failed", "error"))
+        print(f"[*] Resultados: {passed} passed, {failed} failed/error")
+
+        if failed > 0:
+            print("[*] Autocorrigiendo tests fallidos (hasta 3 intentos por test)...")
+            final = autocorrect(results, str(repo))
+            resolved = sum(1 for v in final.values() if v["status"] == "passed")
+            unresolved = sum(1 for v in final.values() if v["status"] == "sin_resolver")
+            print(f"[OK] Autocorrección: {resolved} resueltos, {unresolved} sin resolver\n")
+        else:
+            final = results
+            print("[OK] Todos los tests pasaron\n")
+    else:
+        final = {}
 
 
 if __name__ == "__main__":

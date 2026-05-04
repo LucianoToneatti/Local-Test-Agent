@@ -10,8 +10,8 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 ## Estado Actual
 
 **Fase:** 4 / 5
-**Estado de fase:** 📋 Planificada — lista para ejecutar (2 planes: HU-07 wave 1, HU-08 wave 2)
-**Rama activa:** `feature/HU-07-test-runner`
+**Estado de fase:** ✅ Completa — HU-07 y HU-08 ejecutados, 79/79 tests del agente pasando
+**Rama activa:** `feature/HU-08-autocorrector`
 
 ## Progreso de Fases
 
@@ -20,7 +20,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 | 1 | Exploración y Análisis | ✅ Completa |
 | 2 | Generación de Tests Unitarios | ✅ Completa |
 | 3 | Generación de Tests de Integración | ✅ Completa |
-| 4 | Ejecución y Autocorrección | ⏳ Pendiente |
+| 4 | Ejecución y Autocorrección | ✅ Completa |
 | 5 | Reporte y CLI Completa | ⏳ Pendiente |
 
 ## HUs Completadas
@@ -32,11 +32,11 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 - ✓ HU-04: Extractor AST
 - ✓ HU-05: Generador de tests unitarios
 - ✓ HU-06: Generador de tests de integración
+- ✓ HU-07: Runner de tests (agent/test_runner.py)
+- ✓ HU-08: Autocorrector (agent/autocorrector.py, CorrectionPromptTemplate)
 
 ## HUs Pendientes
 
-- [ ] HU-07: Runner de tests
-- [ ] HU-08: Autocorrector
 - [ ] HU-09: Generador de reporte
 - [ ] HU-10: CLI completa
 
@@ -58,6 +58,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 - Fase 3 ejecutada el 2026-05-03 — HU-06 (17 tests agente, 52/52 ✓), par (estadistica, calculadora) detectado, 7 tests de integración generados, verificación PASSED (INTG-01/02/03 verificados)
 - Fase 4 contexto capturado el 2026-05-04 → `.planning/phases/04-ejecucion-y-autocorreccion/04-CONTEXT.md`
 - Fase 4 planificada el 2026-05-04 → 2 planes: `04-HU-07-PLAN.md` (wave 1), `04-HU-08-PLAN.md` (wave 2) — restricción usuario: pytest no instalado → mensaje claro en test_runner.py
+- Fase 4 ejecutada el 2026-05-04 — HU-07 (12 tests agente), HU-08 (15 tests agente), suite completa 79/79 ✓, EXEC-01..EXEC-04 completados
 
 ---
-*Actualizado: 2026-05-04 tras captura de contexto Fase 4*
+*Actualizado: 2026-05-04 tras ejecución de Fase 4*

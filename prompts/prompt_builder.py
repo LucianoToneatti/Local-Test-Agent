@@ -171,12 +171,63 @@ class IntegrationPromptTemplate(PromptTemplate):
         return BuiltPrompt(system=self._SYSTEM, user=user)
 
 
+class CorrectionPromptTemplate(PromptTemplate):
+    """
+    Template para corregir una función de test pytest que falló.
+
+    Envía al LLM: (1) código de la función fallida, (2) traceback del error,
+    (3) firmas del módulo bajo test.
+    """
+
+    language = "python_correction"
+
+    _SYSTEM = (
+        "You are a Python test-fixing machine. "
+        "You output ONLY the corrected test function as raw Python code. Nothing else.\n"
+        "ABSOLUTE RULES — never break these:\n"
+        "- NO markdown. Never use triple backticks (```) under any circumstances.\n"
+        "- NO explanations, NO introductory sentences, NO comments outside the code.\n"
+        "- Output ONLY the single corrected test function (def test_...).\n"
+        "- Do NOT output the full test file — only the function.\n"
+        "- The function must be valid pytest: start with 'def test_', use assert statements.\n"
+        "- Return only the corrected test function, no explanations."
+    )
+
+    _USER_TEMPLATE = (
+        "Fix the following failing pytest test function.\n\n"
+        "# Failing test function:\n"
+        "{test_function_code}\n\n"
+        "# Error traceback:\n"
+        "{traceback}\n\n"
+        "# Module under test — function signatures:\n"
+        "{module_signatures}\n\n"
+        "OUTPUT RULES: return ONLY the corrected test function (def test_...). "
+        "Raw Python code only. No markdown, no backticks, no explanations."
+    )
+
+    def build(
+        self,
+        code: str,
+        function_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+        traceback: str = "",
+        module_signatures: str = "",
+    ) -> BuiltPrompt:
+        user = self._USER_TEMPLATE.format(
+            test_function_code=code.strip(),
+            traceback=traceback.strip() or "(no traceback available)",
+            module_signatures=module_signatures.strip() or "(no signatures available)",
+        )
+        return BuiltPrompt(system=self._SYSTEM, user=user)
+
+
 # Registro de templates disponibles. Para agregar un nuevo lenguaje:
 # 1. Crear una subclase de PromptTemplate con language="<nombre>"
 # 2. Registrarla aquí.
 _REGISTRY: dict[str, PromptTemplate] = {
     "python": PythonPromptTemplate(),
     "python_integration": IntegrationPromptTemplate(),
+    "python_correction": CorrectionPromptTemplate(),
 }
 
 
