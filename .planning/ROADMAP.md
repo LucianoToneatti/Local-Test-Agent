@@ -100,7 +100,14 @@
 - INTG-03: Tests guardados en `tests_generados/integration/`
 
 **Planes:**
-1. `HU-06` — Generador de tests de integración (`agent/integration_generator.py`)
+
+**Wave 1**
+1. `HU-06` — Generador de tests de integración (`agent/integration_generator.py`, `prompts/prompt_builder.py`, `examples/estadistica.py`) — INTG-01, INTG-02, INTG-03 ✅ 2026-05-03
+
+**Cross-cutting constraints:**
+- Solo stdlib de Python (ast, pathlib) más módulos del propio agente — sin dependencias pip
+- LLM se llama una vez por PAR de módulos (no por función); validar output con ast.parse() antes de escribir
+- Commit con formato `feat: HU-0X - <desc>` + update de marco_teorico_notas.md
 
 **Criterios de éxito:**
 1. El agente identifica correctamente los pares de módulos que se importan entre sí en un repositorio multi-archivo
@@ -179,9 +186,9 @@
 | TGEN-01 | Fase 2 | Complete ✅ |
 | TGEN-02 | Fase 2 | Complete ✅ |
 | TGEN-03 | Fase 2 | Complete ✅ |
-| INTG-01 | Fase 3 | Pending |
-| INTG-02 | Fase 3 | Pending |
-| INTG-03 | Fase 3 | Pending |
+| INTG-01 | Fase 3 | Complete ✅ |
+| INTG-02 | Fase 3 | Complete ✅ |
+| INTG-03 | Fase 3 | Complete ✅ |
 | EXEC-01 | Fase 4 | Pending |
 | EXEC-02 | Fase 4 | Pending |
 | EXEC-03 | Fase 4 | Pending |

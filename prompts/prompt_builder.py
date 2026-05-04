@@ -107,11 +107,76 @@ class PythonPromptTemplate(PromptTemplate):
         return BuiltPrompt(system=self._SYSTEM, user=user)
 
 
+class IntegrationPromptTemplate(PromptTemplate):
+    """
+    Template para generar tests de integración entre pares de módulos Python.
+
+    Se llama una vez por par (A importa B). Pasa al LLM:
+    (1) código fuente completo de A, (2) firmas de funciones de B, (3) nombres de módulos.
+    """
+
+    language = "python_integration"
+
+    _SYSTEM = (
+        "You are a Python integration test-writing machine. "
+        "You output ONLY raw Python code. Nothing else.\n"
+        "ABSOLUTE RULES — never break these:\n"
+        "- NO markdown. Never use triple backticks (```) under any circumstances.\n"
+        "- NO explanations, NO introductory sentences, NO comments outside the code.\n"
+        "- Your entire response must be valid Python that can be saved directly to a .py file.\n"
+        "- First line of your response must be an import statement.\n"
+        "- All imports must appear ONCE at the top of the file. Never repeat imports inside "
+        "test functions or classes.\n"
+        "- Use pytest. ONLY test functions from module A that internally depend on module B. "
+        "NEVER test functions from module B in isolation.\n"
+        "- No mocks. Tests must exercise the real interaction between A and B.\n"
+        "- Assert with concrete expected values (e.g., assert promedio([1, 2, 3]) == 2.0).\n"
+        "- Before including a test, verify: does it call a function from A? Does that function "
+        "use B internally? If no → exclude it."
+    )
+
+    _USER_TEMPLATE = (
+        "Write pytest integration tests for module A, which depends on module B.\n\n"
+        "# Module A (the module under test): {module_a_name}.py\n"
+        "{module_a_source}\n\n"
+        "# Module B function signatures (used internally by A): {module_b_name}.py\n"
+        "{module_b_sigs}\n\n"
+        "STRICT RULES:\n"
+        "1. Test ONLY functions from {module_a_name}. "
+        "Import them with: from {module_a_name} import <function>\n"
+        "2. DO NOT write tests for functions from {module_b_name} in isolation.\n"
+        "3. No mocks — let A call B for real.\n"
+        "4. Define all imports once at the top of the file. "
+        "Do not repeat import statements inside test functions.\n"
+        "5. Assert with concrete expected values.\n\n"
+        "OUTPUT RULES: raw Python code only. "
+        "No markdown, no backticks, no explanations. "
+        "Start your response directly with 'import'."
+    )
+
+    def build(
+        self,
+        code: str,
+        function_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+        class_name: Optional[str] = None,
+        module_b_sigs: str = "",
+    ) -> BuiltPrompt:
+        user = self._USER_TEMPLATE.format(
+            module_a_name=module_name or "module_a",
+            module_a_source=code.strip(),
+            module_b_name=class_name or "module_b",
+            module_b_sigs=module_b_sigs or "(no signatures available)",
+        )
+        return BuiltPrompt(system=self._SYSTEM, user=user)
+
+
 # Registro de templates disponibles. Para agregar un nuevo lenguaje:
 # 1. Crear una subclase de PromptTemplate con language="<nombre>"
 # 2. Registrarla aquí.
 _REGISTRY: dict[str, PromptTemplate] = {
     "python": PythonPromptTemplate(),
+    "python_integration": IntegrationPromptTemplate(),
 }
 
 

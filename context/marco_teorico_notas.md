@@ -251,3 +251,51 @@ Una vez procesados todos los archivos, `main()` retorna normalmente. Python impr
 - **Deuda técnica / pendientes:** soporte para `async def` en prompts (template actual
   no menciona async), caché de resultados para no re-llamar al LLM para funciones sin
   cambios (v2 QUAL-01), template separado para métodos vs. funciones (v2 si se necesita).
+
+---
+
+### HU-06: Generador de Tests de Integración
+
+- **Qué se hizo:** se creó `agent/integration_generator.py` con la función pública
+  `generate(repo_path, ast_result)` que detecta pares de módulos relacionados por imports
+  (campo `imports` del dict de `extract()`), llama al LLM una vez por par, valida el output
+  con `ast.parse()` (1 reintento si falla), y escribe los tests en
+  `tests_generados/integration/test_<stemA>_<stemB>.py` más un `conftest.py` con `sys.path`.
+  Se agregó `IntegrationPromptTemplate` a `prompts/prompt_builder.py` con
+  `language="python_integration"`, registrado en `_REGISTRY`.
+  Se creó `examples/estadistica.py` como módulo de referencia que importa funciones de
+  `calculadora.py` para validar los criterios de éxito de la Fase 3.
+
+- **Por qué LLM una vez por par (no por función de integración):**
+  A diferencia de los tests unitarios (una llamada por función), los tests de integración
+  deben validar la INTERACCIÓN entre módulos. Enviar el módulo A completo + las firmas de B
+  le permite al LLM entender el flujo de datos entre los dos módulos y generar asserts
+  significativos. Si llamáramos por función de A, perderíamos el contexto del módulo importado.
+
+- **Por qué solo firmas de B (no el código fuente completo):**
+  Enviar el cuerpo completo de B junto con el de A puede exceder el contexto del modelo
+  (DeepSeek Coder 6.7b tiene límite de ~4096 tokens). Las firmas (nombre + parámetros)
+  son suficientes para que el LLM sepa cómo llamar las funciones de B y qué valores esperar.
+  Esta decisión (D-03) balancea calidad de prompt vs. tamaño de contexto.
+
+- **Cómo funciona la detección de pares (INTG-01):**
+  `_find_pairs()` itera el dict de `extract()` y para cada archivo busca en su campo `imports`
+  (ya calculado por `ast_extractor._extract_repo_imports()`) las rutas de otros módulos del repo.
+  Un par (A, B) se incluye solo si B también está como key en el dict — esto excluye imports
+  externos (stdlib, pip). La detección es transitiva: si A→B y B→C, se generan pares (A,B)
+  y (B,C) pero no (A,C) directamente (v1 solo pares directos, v2 puede agregar triplas).
+
+- **Por qué IntegrationPromptTemplate no usa PromptBuilder.build():**
+  La firma de `PromptBuilder.build()` está diseñada para el caso unitario (función individual).
+  El caso de integración requiere pasar 4 datos distintos (fuente de A, firmas de B, nombre A,
+  nombre B). En lugar de sobrecargar la firma existente con kwargs opcionales, `integration_generator.py`
+  instancia `IntegrationPromptTemplate` directamente. La clase sigue registrada en `_REGISTRY`
+  para futura integración con `PromptBuilder.build()` vía kwargs o si se refactoriza la interfaz.
+
+- **Conceptos teóricos que aplican:** grafos de dependencias entre módulos (pares de imports),
+  cobertura de integración vs. unitaria, context window budget en modelos pequeños,
+  patrón de reintento acotado (mismo que HU-05), conftest.py por directorio en pytest.
+
+- **Deuda técnica / pendientes:** deduplicación de pares bidireccionales (A→B y B→A generan
+  tests solapados — v2 QUAL-02), triplas de dependencia A→B→C (v2), template separado por tipo
+  de interacción clase vs. función libre (v2 si se necesita).

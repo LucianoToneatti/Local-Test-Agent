@@ -21,15 +21,10 @@ produce tests listos para correr con pytest, completamente offline.
 - ✓ Exploración automática de repositorio — `agent/repo_explorer.py` — HU-03 (Fase 1)
 - ✓ Extracción AST — `agent/ast_extractor.py` — HU-04 (Fase 1)
 - ✓ Generación de tests unitarios — `agent/test_generator.py`, TGEN-01/02/03 — HU-05 (Fase 2)
+- ✓ Generación de tests de integración — `agent/integration_generator.py`, `IntegrationPromptTemplate`, INTG-01/02/03 — HU-06 (Fase 3)
 
 ### Active
 
-- [ ] **HU-06**: Generación de tests de integración — identificar imports entre módulos, mínimo 1 test por par de módulos relacionados, guardados en `tests_generados/integration/`
-- [ ] **HU-07**: Ejecución automática de tests — correr pytest, capturar stdout/stderr, registrar passed/failed/error
-- [ ] **HU-08**: Autocorrección de tests fallidos — enviar test + error al LLM y pedir versión corregida, máximo 3 intentos por test
-- [ ] **HU-09**: Reporte de resultados — generar `reporte.md` con resumen de passed/failed/sin resolver y tiempo total de ejecución
-- [ ] **HU-10**: CLI completa — `python3 agent.py --repo ./path` ejecuta el flujo completo de extremo a extremo
-- [ ] **HU-06**: Generación de tests de integración — identificar imports entre módulos, mínimo 1 test por par de módulos relacionados, guardados en `tests_generados/integration/` (Fase 3)
 - [ ] **HU-07**: Ejecución automática de tests — correr pytest, capturar stdout/stderr, registrar passed/failed/error (Fase 4)
 - [ ] **HU-08**: Autocorrección de tests fallidos — enviar test + error al LLM y pedir versión corregida, máximo 3 intentos por test (Fase 4)
 - [ ] **HU-09**: Reporte de resultados — generar `reporte.md` con resumen de passed/failed/sin resolver y tiempo total de ejecución (Fase 5)
@@ -45,8 +40,8 @@ produce tests listos para correr con pytest, completamente offline.
 
 ## Context
 
-- **Current State:** Fase 2 completa — `generate()` en producción, 35/35 tests del agente pasan
-- **Repositorio activo**: rama `feature/HU-05-unit-test-generator`
+- **Current State:** Fase 3 completa — `integration_generator.generate()` en producción, 52/52 tests del agente pasan; tests unitarios e integración generados para `examples/`
+- **Repositorio activo**: rama `feature/HU-06-integration-test-generator`
 - **Modelo LLM**: DeepSeek Coder 6.7b vía Ollama (API local HTTP en `localhost:11434`); ocupa ~4 GB de RAM con cuantización Q4
 - **Ejemplo de referencia**: `examples/calculadora.py` — calculadora simple usada para validar cada HU
 - **Notas de diseño**: `context/marco_teorico_notas.md` — se actualiza después de cada HU con qué se hizo, por qué y qué conceptos teóricos aplican
@@ -91,4 +86,4 @@ Este documento evoluciona en cada transición de fase y milestone.
 4. Actualizar Context con estado actual
 
 ---
-*Last updated: 2026-05-03 after Phase 2 completion*
+*Last updated: 2026-05-03 after Phase 3 completion*
