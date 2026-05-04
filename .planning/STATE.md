@@ -10,7 +10,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 ## Estado Actual
 
 **Fase:** 4 / 5
-**Estado de fase:** 📋 Contexto capturado — lista para planificar
+**Estado de fase:** 📋 Planificada — lista para ejecutar (2 planes: HU-07 wave 1, HU-08 wave 2)
 **Rama activa:** `feature/HU-07-test-runner`
 
 ## Progreso de Fases
@@ -57,6 +57,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 - Fase 3 planificada el 2026-05-03 → 1 plan: `03-HU-06-PLAN.md` (wave 1) — verificación PASSED (D-01..D-08 honradas, INTG-01/02/03 cubiertos)
 - Fase 3 ejecutada el 2026-05-03 — HU-06 (17 tests agente, 52/52 ✓), par (estadistica, calculadora) detectado, 7 tests de integración generados, verificación PASSED (INTG-01/02/03 verificados)
 - Fase 4 contexto capturado el 2026-05-04 → `.planning/phases/04-ejecucion-y-autocorreccion/04-CONTEXT.md`
+- Fase 4 planificada el 2026-05-04 → 2 planes: `04-HU-07-PLAN.md` (wave 1), `04-HU-08-PLAN.md` (wave 2) — restricción usuario: pytest no instalado → mensaje claro en test_runner.py
 
 ---
 *Actualizado: 2026-05-04 tras captura de contexto Fase 4*

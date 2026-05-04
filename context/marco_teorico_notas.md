@@ -299,3 +299,38 @@ Una vez procesados todos los archivos, `main()` retorna normalmente. Python impr
 - **Deuda técnica / pendientes:** deduplicación de pares bidireccionales (A→B y B→A generan
   tests solapados — v2 QUAL-02), triplas de dependencia A→B→C (v2), template separado por tipo
   de interacción clase vs. función libre (v2 si se necesita).
+
+### HU-07: Runner de Tests
+
+- **Qué se hizo:** se creó `agent/test_runner.py` con la función pública
+  `run(tests_dir: str) -> dict` que verifica la disponibilidad de pytest con
+  `importlib.util.find_spec("pytest")`, ejecuta `pytest -v` como subproceso aislado
+  con `subprocess.run([sys.executable, '-m', 'pytest', '-v', ...], capture_output=True, text=True)`,
+  y parsea el stdout para retornar `{test_id: {'status': 'passed'|'failed'|'error', 'traceback': str|None}}`.
+  Si pytest no está instalado, imprime `"[ERROR] pytest no está instalado. Ejecutá: pip install pytest"`
+  y retorna `{}` sin lanzar excepción.
+
+- **Por qué detectar pytest explícitamente antes de subprocess:**
+  Ejecutar `subprocess.run([sys.executable, '-m', 'pytest', ...])` cuando pytest no está instalado
+  produce un `No module named pytest` en stderr con exit code 1 — un error críptico que el usuario
+  no puede diagnosticar fácilmente. La verificación previa con `importlib.util.find_spec("pytest")`
+  (que retorna `None` si el módulo no existe en el entorno) permite dar un mensaje accionable
+  antes de intentar ejecutar el subproceso. Esta decisión prioriza la experiencia del usuario
+  sobre la simplicidad de implementación.
+
+- **Por qué sys.executable en vez de "pytest" directo:**
+  Usar `sys.executable + '-m pytest'` garantiza que se ejecuta pytest del mismo entorno Python
+  que el agente. Si el usuario tiene múltiples entornos virtuales, `pytest` en PATH puede
+  apuntar al entorno equivocado; `sys.executable -m pytest` siempre usa el entorno activo.
+
+- **Por qué parseo regex en vez de pytest JSON/XML:**
+  El formato JSON (`pytest --json-report`) requiere un plugin externo — viola la restricción
+  de zero deps del proyecto. El formato JUnit XML (pytest --junit-xml) requiere escribir
+  un archivo temporal. El parseo del stdout de `pytest -v` es suficiente para extraer
+  test_ids y status con un regex simple, y el traceback está presente en el mismo stdout.
+  El fix en `_attach_tracebacks` (usar `re.finditer` con lookahead en vez de `sep_re.split`)
+  evita que el patrón `_{5,}` sea consumido por el split antes de poder extraer el nombre de función.
+
+- **Conceptos teóricos que aplican:** subproceso vs. subprocess (aislamiento del estado Python),
+  test discovery de pytest (convención `test_*.py::test_*`), captura de stdout/stderr,
+  regex sobre output de CLI, `importlib.util.find_spec` para detección de módulos sin importar.
