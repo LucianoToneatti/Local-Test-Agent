@@ -54,3 +54,7 @@ logs/
 .DS_Store
 Thumbs.db
 tests_generados/
+
+# Archivos internos de trabajo (no para el repositorio público)
+CLAUDE.md
+.planning/
