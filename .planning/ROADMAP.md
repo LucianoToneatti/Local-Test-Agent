@@ -132,15 +132,15 @@
 - EXEC-04: Máximo 3 intentos; si falla → "sin resolver"
 
 **Planes:**
-1. `HU-07` — Runner de tests (`agent/test_runner.py`)
-2. `HU-08` — Autocorrector (`agent/autocorrector.py`)
+1. `HU-07` — Runner de tests (`agent/test_runner.py`) ✅ 2026-05-04
+2. `HU-08` — Autocorrector (`agent/autocorrector.py`) ✅ 2026-05-04
 
 **Criterios de éxito:**
-1. El runner ejecuta `pytest` sobre `tests_generados/` y devuelve un diccionario con el resultado de cada test
-2. Un test que falla llega al autocorrector con el traceback completo como contexto
-3. Si el LLM corrige el test y ahora pasa, queda marcado como "passed" en la siguiente ejecución
-4. Un test que sigue fallando tras 3 intentos queda marcado como "sin resolver" y no bloquea el flujo
-5. Se commiteó con mensaje HU-07 y se actualizó `context/marco_teorico_notas.md`
+1. El runner ejecuta `pytest` sobre `tests_generados/` y devuelve un diccionario con el resultado de cada test ✅
+2. Un test que falla llega al autocorrector con el traceback completo como contexto ✅
+3. Si el LLM corrige el test y ahora pasa, queda marcado como "passed" en la siguiente ejecución ✅
+4. Un test que sigue fallando tras 3 intentos queda marcado como "sin resolver" y no bloquea el flujo ✅
+5. Se commiteó con mensaje HU-07 y se actualizó `context/marco_teorico_notas.md` ✅
 
 **UI hint:** no
 
@@ -189,10 +189,10 @@
 | INTG-01 | Fase 3 | Complete ✅ |
 | INTG-02 | Fase 3 | Complete ✅ |
 | INTG-03 | Fase 3 | Complete ✅ |
-| EXEC-01 | Fase 4 | Pending |
-| EXEC-02 | Fase 4 | Pending |
-| EXEC-03 | Fase 4 | Pending |
-| EXEC-04 | Fase 4 | Pending |
+| EXEC-01 | Fase 4 | Complete ✅ |
+| EXEC-02 | Fase 4 | Complete ✅ |
+| EXEC-03 | Fase 4 | Complete ✅ |
+| EXEC-04 | Fase 4 | Complete ✅ |
 | REPO-01 | Fase 5 | Pending |
 | REPO-02 | Fase 5 | Pending |
 | CLI-01 | Fase 5 | Pending |
