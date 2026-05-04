@@ -5,12 +5,12 @@
 Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 
 **Core value:** Un solo comando analiza cualquier repositorio Python y produce tests listos para pytest, completamente offline.
-**Fase actual:** Fase 3 — Generación de Tests de Integración
+**Fase actual:** Fase 4 — Ejecución y Autocorrección
 
 ## Estado Actual
 
-**Fase:** 3 / 5
-**Estado de fase:** 📋 Lista para ejecutar — 1/1 planes planificados, verificación PASSED
+**Fase:** 4 / 5
+**Estado de fase:** ⏳ Pendiente — Fase 3 completa, Fase 4 por planificar
 **Rama activa:** `feature/HU-06-integration-test-generator`
 
 ## Progreso de Fases
@@ -19,7 +19,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 |------|--------|--------|
 | 1 | Exploración y Análisis | ✅ Completa |
 | 2 | Generación de Tests Unitarios | ✅ Completa |
-| 3 | Generación de Tests de Integración | 📋 Lista para ejecutar |
+| 3 | Generación de Tests de Integración | ✅ Completa |
 | 4 | Ejecución y Autocorrección | ⏳ Pendiente |
 | 5 | Reporte y CLI Completa | ⏳ Pendiente |
 
@@ -28,13 +28,13 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 - ✓ HU-00: Estructura de proyecto
 - ✓ HU-01: Cliente LLM (agent/llm_client.py)
 - ✓ HU-02: Constructor de prompts (prompts/prompt_builder.py)
-
-## HUs Pendientes
-
 - ✓ HU-03: Explorador de repositorio
 - ✓ HU-04: Extractor AST
 - ✓ HU-05: Generador de tests unitarios
-- [ ] HU-06: Generador de tests de integración
+- ✓ HU-06: Generador de tests de integración
+
+## HUs Pendientes
+
 - [ ] HU-07: Runner de tests
 - [ ] HU-08: Autocorrector
 - [ ] HU-09: Generador de reporte
@@ -55,6 +55,7 @@ Ver: `.planning/PROJECT.md` (actualizado 2026-05-02)
 - Fase 2 planificada el 2026-05-03 → 1 plan: `02-HU-05-PLAN.md` (wave 1) — verificación PASSED (D-01..D-08 honradas, TGEN-01/02/03 cubiertos)
 - Fase 2 ejecutada el 2026-05-03 — HU-05 (12 tests agente, 35/35 ✓), 18 tests generados para calculadora.py, 4/4 criterios de éxito del roadmap cumplidos
 - Fase 3 planificada el 2026-05-03 → 1 plan: `03-HU-06-PLAN.md` (wave 1) — verificación PASSED (D-01..D-08 honradas, INTG-01/02/03 cubiertos)
+- Fase 3 ejecutada el 2026-05-03 — HU-06 (17 tests agente, 52/52 ✓), par (estadistica, calculadora) detectado, 7 tests de integración generados, verificación PASSED (INTG-01/02/03 verificados)
 
 ---
-*Actualizado: 2026-05-03 tras planificación Fase 3*
+*Actualizado: 2026-05-03 tras ejecución Fase 3*
