@@ -107,11 +107,67 @@ class PythonPromptTemplate(PromptTemplate):
         return BuiltPrompt(system=self._SYSTEM, user=user)
 
 
+class IntegrationPromptTemplate(PromptTemplate):
+    """
+    Template para generar tests de integración entre pares de módulos Python.
+
+    Se llama una vez por par (A importa B). Pasa al LLM:
+    (1) código fuente completo de A, (2) firmas de funciones de B, (3) nombres de módulos.
+    """
+
+    language = "python_integration"
+
+    _SYSTEM = (
+        "You are a Python integration test-writing machine. "
+        "You output ONLY raw Python code. Nothing else.\n"
+        "ABSOLUTE RULES — never break these:\n"
+        "- NO markdown. Never use triple backticks (```) under any circumstances.\n"
+        "- NO explanations, NO introductory sentences, NO comments outside the code.\n"
+        "- Your entire response must be valid Python that can be saved directly to a .py file.\n"
+        "- First line of your response must be an import statement.\n"
+        "- Use pytest. Generate integration tests that call functions from module A "
+        "(which internally uses module B). Assert with concrete expected values."
+    )
+
+    _USER_TEMPLATE = (
+        "Write pytest integration tests for these two related Python modules.\n\n"
+        "# Module A (the importer): {module_a_name}.py\n"
+        "{module_a_source}\n\n"
+        "# Module B function signatures (imported by A): {module_b_name}.py\n"
+        "{module_b_sigs}\n\n"
+        "Generate tests that:\n"
+        "1. Import from {module_a_name}: 'from {module_a_name} import <function>'\n"
+        "2. Call functions from {module_a_name} that internally use {module_b_name}\n"
+        "3. Assert with concrete expected values "
+        "(e.g., assert promedio([1, 2, 3]) == 2.0)\n\n"
+        "OUTPUT RULES: raw Python code only. "
+        "No markdown, no backticks, no explanations. "
+        "Start your response directly with 'import'."
+    )
+
+    def build(
+        self,
+        code: str,
+        function_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+        class_name: Optional[str] = None,
+        module_b_sigs: str = "",
+    ) -> BuiltPrompt:
+        user = self._USER_TEMPLATE.format(
+            module_a_name=module_name or "module_a",
+            module_a_source=code.strip(),
+            module_b_name=class_name or "module_b",
+            module_b_sigs=module_b_sigs or "(no signatures available)",
+        )
+        return BuiltPrompt(system=self._SYSTEM, user=user)
+
+
 # Registro de templates disponibles. Para agregar un nuevo lenguaje:
 # 1. Crear una subclase de PromptTemplate con language="<nombre>"
 # 2. Registrarla aquí.
 _REGISTRY: dict[str, PromptTemplate] = {
     "python": PythonPromptTemplate(),
+    "python_integration": IntegrationPromptTemplate(),
 }
 
 
