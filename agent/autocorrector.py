@@ -30,8 +30,11 @@ def autocorrect(results: dict, repo_path: str) -> dict:
         repo_path: Ruta al repositorio analizado.
 
     Returns:
-        Dict con mismo formato que results. Tests corregidos → 'passed'.
-        Tests que agotaron intentos → 'sin_resolver'. No modifica tests 'passed'.
+        Dict con mismo formato que results, más campo 'attempts' en tests corregidos.
+        Tests corregidos → 'passed'. Tests agotados → 'sin_resolver'.
+        'attempts': list[{'traceback': str|None, 'generated_code': str}] — historial
+        de cada intento (traceback recibido + código generado por el LLM), en orden.
+        No modifica tests que ya tenían status 'passed'.
     """
     client = LLMClient()
     final = dict(results)
@@ -47,8 +50,10 @@ def autocorrect(results: dict, repo_path: str) -> dict:
 def _correct_test(client: LLMClient, test_id: str, info: dict, repo_path: str) -> dict:
     """
     Intenta corregir un test_id fallido hasta _MAX_ATTEMPTS veces.
-    Retorna el dict de resultado actualizado.
+    Retorna el dict de resultado actualizado con historial de intentos.
     """
+    attempts = []
+
     for attempt in range(_MAX_ATTEMPTS):
         test_file, func_name = _split_test_id(test_id)
         if test_file is None:
@@ -69,6 +74,8 @@ def _correct_test(client: LLMClient, test_id: str, info: dict, repo_path: str) -
         raw = client.generate(prompt.user, system=prompt.system)
         corrected_code = clean_response(raw)
 
+        attempts.append({"traceback": traceback or None, "generated_code": corrected_code})
+
         try:
             ast.parse(corrected_code)
         except SyntaxError:
@@ -78,11 +85,11 @@ def _correct_test(client: LLMClient, test_id: str, info: dict, repo_path: str) -
 
         new_status = _rerun_test(test_id)
         if new_status == "passed":
-            return {"status": "passed", "traceback": None}
+            return {"status": "passed", "traceback": None, "attempts": attempts}
 
         info = {"status": new_status, "traceback": None}
 
-    return {"status": "sin_resolver", "traceback": info.get("traceback")}
+    return {"status": "sin_resolver", "traceback": info.get("traceback"), "attempts": attempts}
 
 
 def _split_test_id(test_id: str):

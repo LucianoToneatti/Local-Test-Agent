@@ -156,6 +156,8 @@ def test_autocorrect_corrects_failing_test(tmp_path):
         final = autocorrect(results, str(tmp_path))
 
     assert final[test_id]["status"] == "passed"
+    assert len(final[test_id]["attempts"]) == 1
+    assert final[test_id]["attempts"][0]["generated_code"] == fixed_code
 
 
 def test_autocorrect_marks_unresolved_after_3_attempts(tmp_path):
@@ -180,6 +182,7 @@ def test_autocorrect_marks_unresolved_after_3_attempts(tmp_path):
 
     assert final[test_id]["status"] == "sin_resolver"
     assert mock_client.generate.call_count == 3
+    assert len(final[test_id]["attempts"]) == 3
 
 
 def test_autocorrect_skips_invalid_llm_output(tmp_path):
@@ -217,4 +220,32 @@ def test_autocorrect_returns_same_format_as_runner(tmp_path):
     for tid, info in final.items():
         assert "status" in info
         assert "traceback" in info
-        assert isinstance(info["status"], str)
+        assert "attempts" in info
+        assert isinstance(info["attempts"], list)
+
+
+def test_autocorrect_attempts_record_traceback_and_code(tmp_path):
+    test_content = "def test_suma():\n    assert 1 + 1 == 3\n"
+    f = _make_test_file(tmp_path, test_content)
+    test_id = f"{f}::test_suma"
+
+    results = {test_id: {"status": "failed", "traceback": "AssertionError: assert 2 == 3"}}
+
+    generated = "def test_suma():\n    assert 1 + 1 == 2"
+    mock_run_result = MagicMock()
+    mock_run_result.returncode = 1
+    mock_run_result.stdout = "FAILED"
+    mock_run_result.stderr = ""
+
+    with patch("agent.autocorrector.LLMClient") as MockLLM, \
+         patch("agent.autocorrector.subprocess.run", return_value=mock_run_result):
+        mock_client = MagicMock()
+        mock_client.generate.return_value = generated
+        MockLLM.return_value = mock_client
+        final = autocorrect(results, str(tmp_path))
+
+    entry = final[test_id]["attempts"][0]
+    assert entry["traceback"] == "AssertionError: assert 2 == 3"
+    assert entry["generated_code"] == generated
+    assert "traceback" in entry
+    assert "generated_code" in entry
