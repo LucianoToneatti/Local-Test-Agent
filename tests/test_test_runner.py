@@ -1,0 +1,154 @@
+import importlib.util
+import subprocess
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from agent.test_runner import _attach_tracebacks, _parse_output, run
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_subprocess_result(stdout="", stderr="", returncode=0):
+    mock = MagicMock()
+    mock.stdout = stdout
+    mock.stderr = stderr
+    mock.returncode = returncode
+    return mock
+
+
+# ---------------------------------------------------------------------------
+# run() — detección de pytest no instalado
+# ---------------------------------------------------------------------------
+
+def test_run_pytest_not_installed(capsys, monkeypatch):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+    result = run("tests_generados/")
+    assert result == {}
+    captured = capsys.readouterr()
+    assert "pip install pytest" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# run() — directorio inexistente
+# ---------------------------------------------------------------------------
+
+def test_run_directory_not_found(capsys, monkeypatch):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    result = run("nonexistent_dir_xyz_abc")
+    assert result == {}
+    captured = capsys.readouterr()
+    assert "no existe" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# _parse_output() — parseo de resultados
+# ---------------------------------------------------------------------------
+
+def test_parse_output_all_passed():
+    output = (
+        "tests_generados/unit/test_calc.py::test_sumar PASSED\n"
+        "tests_generados/unit/test_calc.py::test_restar PASSED\n"
+    )
+    result = _parse_output(output)
+    assert len(result) == 2
+    for test_id, info in result.items():
+        assert info["status"] == "passed"
+        assert info["traceback"] is None
+
+
+def test_parse_output_mixed_results():
+    output = (
+        "tests_generados/unit/test_calc.py::test_suma PASSED\n"
+        "tests_generados/unit/test_calc.py::test_div FAILED\n"
+        "tests_generados/unit/test_calc.py::test_mod ERROR\n"
+    )
+    result = _parse_output(output)
+    assert result["tests_generados/unit/test_calc.py::test_suma"]["status"] == "passed"
+    assert result["tests_generados/unit/test_calc.py::test_div"]["status"] == "failed"
+    assert result["tests_generados/unit/test_calc.py::test_mod"]["status"] == "error"
+
+
+def test_parse_output_empty_output():
+    assert _parse_output("") == {}
+
+
+def test_parse_output_failed_has_none_traceback_by_default():
+    output = "tests_generados/unit/test_calc.py::test_div FAILED\n"
+    result = _parse_output(output)
+    test_id = "tests_generados/unit/test_calc.py::test_div"
+    assert result[test_id]["traceback"] is None
+
+
+# ---------------------------------------------------------------------------
+# _attach_tracebacks() — extracción de tracebacks
+# ---------------------------------------------------------------------------
+
+def test_attach_tracebacks_assigns_to_correct_test():
+    output = (
+        "tests_generados/unit/test_calc.py::test_sumar FAILED\n"
+        "============================= FAILURES =============================\n"
+        "_____________________________ test_sumar ____________________________\n"
+        "AssertionError: assert 1 == 2\n"
+        "=========================== short test summary ============================\n"
+    )
+    results = {
+        "tests_generados/unit/test_calc.py::test_sumar": {"status": "failed", "traceback": None}
+    }
+    _attach_tracebacks(output, results)
+    tb = results["tests_generados/unit/test_calc.py::test_sumar"]["traceback"]
+    assert tb is not None
+    assert "AssertionError" in tb
+
+
+def test_attach_tracebacks_no_failure_block():
+    output = "tests_generados/unit/test_calc.py::test_sumar PASSED\n"
+    results = {
+        "tests_generados/unit/test_calc.py::test_sumar": {"status": "passed", "traceback": None}
+    }
+    _attach_tracebacks(output, results)
+    assert results["tests_generados/unit/test_calc.py::test_sumar"]["traceback"] is None
+
+
+# ---------------------------------------------------------------------------
+# run() — integración con subprocess mockeado
+# ---------------------------------------------------------------------------
+
+def test_run_returns_passed_dict(tmp_path, monkeypatch):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    stdout = "tests_generados/unit/test_calc.py::test_suma PASSED\n"
+    with patch("agent.test_runner.subprocess.run", return_value=_make_subprocess_result(stdout=stdout)):
+        result = run(str(tmp_path))
+    assert result == {
+        "tests_generados/unit/test_calc.py::test_suma": {"status": "passed", "traceback": None}
+    }
+
+
+def test_run_returns_failed_dict(tmp_path, monkeypatch):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    stdout = "tests_generados/unit/test_calc.py::test_div FAILED\n"
+    with patch("agent.test_runner.subprocess.run", return_value=_make_subprocess_result(stdout=stdout, returncode=1)):
+        result = run(str(tmp_path))
+    assert result["tests_generados/unit/test_calc.py::test_div"]["status"] == "failed"
+
+
+def test_run_subprocess_called_with_list(tmp_path, monkeypatch):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    with patch("agent.test_runner.subprocess.run", return_value=_make_subprocess_result()) as mock_run:
+        run(str(tmp_path))
+    call_args = mock_run.call_args
+    assert isinstance(call_args[0][0], list)
+
+
+def test_run_captures_stderr(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    with patch(
+        "agent.test_runner.subprocess.run",
+        return_value=_make_subprocess_result(stderr="some error output", returncode=1),
+    ):
+        result = run(str(tmp_path))
+    # No debe lanzar excepción; stderr se captura y procesa normalmente
+    assert isinstance(result, dict)
