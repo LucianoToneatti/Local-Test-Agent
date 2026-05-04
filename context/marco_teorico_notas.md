@@ -334,3 +334,43 @@ Una vez procesados todos los archivos, `main()` retorna normalmente. Python impr
 - **Conceptos teóricos que aplican:** subproceso vs. subprocess (aislamiento del estado Python),
   test discovery de pytest (convención `test_*.py::test_*`), captura de stdout/stderr,
   regex sobre output de CLI, `importlib.util.find_spec` para detección de módulos sin importar.
+
+### HU-08: Autocorrector de Tests
+
+- **Qué se hizo:** se creó `agent/autocorrector.py` con la función pública
+  `autocorrect(results: dict, repo_path: str) -> dict` que itera los tests con
+  status 'failed' o 'error', llama al LLM hasta 3 veces por test_id enviando
+  el código de la función fallida + traceback + firmas del módulo bajo test,
+  valida el output con `ast.parse()` antes de escribirlo, reemplaza solo la
+  función fallida en el archivo de test (no el archivo completo), re-corre el
+  test corregido individualmente con `pytest path::test_nombre`, y marca como
+  'sin_resolver' los que agotaron los 3 intentos.
+  Se agregó `CorrectionPromptTemplate` a `prompts/prompt_builder.py` con
+  `language="python_correction"`, registrado en `_REGISTRY`.
+  Se integraron las dos llamadas en `agent.py`:
+  `results = run_tests(tests_dir)` → `final = autocorrect(results, str(repo))`.
+
+- **Por qué corregir solo la función fallida (D-05):**
+  Un archivo de test puede tener N funciones. Si reemplazáramos el archivo completo
+  con el output del LLM, perderíamos las funciones que ya pasan (el LLM podría
+  omitirlas o cambiarlas). Al extraer y reemplazar solo la función fallida usando
+  AST, el resto del archivo queda intacto — conservamos las funciones que ya pasan.
+
+- **Por qué re-correr solo el test_id individual (D-12):**
+  Re-correr la suite completa para verificar una corrección tendría un costo O(n)
+  en tiempo por intento, donde n es el total de tests. En el caso extremo con N
+  tests fallidos × 3 intentos × m tests en suite, el costo es O(N×3×m). Al
+  re-correr solo el test_id afectado (`pytest path::nombre`), el costo es O(1) por
+  verificación. La suite completa se corre una sola vez al inicio (`run()`).
+
+- **Por qué las firmas se re-derivan en autocorrect() (D-10):**
+  El autocorrector no recibe el ast_result como parámetro para mantener la interfaz
+  simple (`autocorrect(results, repo_path)`). Las firmas se obtienen llamando
+  `explore()` + `extract()` sobre repo_path, que son operaciones de solo lectura.
+  La inferencia del módulo usa la convención `test_<stem>.py` → `<stem>.py` ya
+  establecida por `test_generator.py`.
+
+- **Conceptos teóricos que aplican:** reemplazo selectivo con AST (preservación de
+  contexto), ciclo de feedback LLM→corrección→verificación, límite de intentos para
+  evitar bucles infinitos (EXEC-04), separación de responsabilidades entre runner
+  (solo mide) y autocorrector (solo corrige).
