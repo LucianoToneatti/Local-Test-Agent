@@ -25,8 +25,8 @@ produce tests listos para correr con pytest, completamente offline.
 
 ### Active
 
-- [ ] **HU-07**: Ejecución automática de tests — correr pytest, capturar stdout/stderr, registrar passed/failed/error (Fase 4)
-- [ ] **HU-08**: Autocorrección de tests fallidos — enviar test + error al LLM y pedir versión corregida, máximo 3 intentos por test (Fase 4)
+- ✓ **HU-07**: Ejecución automática de tests — `agent/test_runner.py`, EXEC-01/02 — Validado en Fase 4
+- ✓ **HU-08**: Autocorrección de tests fallidos — `agent/autocorrector.py`, `CorrectionPromptTemplate`, EXEC-03/04 — Validado en Fase 4
 - [ ] **HU-09**: Reporte de resultados — generar `reporte.md` con resumen de passed/failed/sin resolver y tiempo total de ejecución (Fase 5)
 - [ ] **HU-10**: CLI completa — `python3 agent.py --repo ./path` ejecuta el flujo completo de extremo a extremo (Fase 5)
 
@@ -40,8 +40,8 @@ produce tests listos para correr con pytest, completamente offline.
 
 ## Context
 
-- **Current State:** Fase 3 completa — `integration_generator.generate()` en producción, 52/52 tests del agente pasan; tests unitarios e integración generados para `examples/`
-- **Repositorio activo**: rama `feature/HU-06-integration-test-generator`
+- **Current State:** Fase 4 completa — `test_runner.run()` y `autocorrect()` en producción, 79/79 tests del agente pasan; ciclo completo de ejecución y autocorrección implementado
+- **Repositorio activo**: rama `feature/HU-08-autocorrector`
 - **Modelo LLM**: DeepSeek Coder 6.7b vía Ollama (API local HTTP en `localhost:11434`); ocupa ~4 GB de RAM con cuantización Q4
 - **Ejemplo de referencia**: `examples/calculadora.py` — calculadora simple usada para validar cada HU
 - **Notas de diseño**: `context/marco_teorico_notas.md` — se actualiza después de cada HU con qué se hizo, por qué y qué conceptos teóricos aplican
@@ -86,4 +86,4 @@ Este documento evoluciona en cada transición de fase y milestone.
 4. Actualizar Context con estado actual
 
 ---
-*Last updated: 2026-05-03 after Phase 3 completion*
+*Last updated: 2026-05-04 after Phase 4 completion*
