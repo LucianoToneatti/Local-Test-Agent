@@ -10,7 +10,10 @@ import ast
 import pathlib
 import sys
 
+from agent.ast_extractor import extract
+from agent.integration_generator import generate as generate_integration
 from agent.llm_client import LLMClient, OllamaConnectionError
+from agent.repo_explorer import explore
 from prompts.prompt_builder import PromptBuilder, clean_response
 
 _ROOT = pathlib.Path(__file__).parent
@@ -105,6 +108,11 @@ def main() -> None:
         out = process_file(py_file, client)
         if out:
             print(f"  [OK] {out.relative_to(_ROOT)}\n")
+
+    print("[*] Generando tests de integración...")
+    ast_result = extract(explore(str(repo)), str(repo))
+    generate_integration(str(repo), ast_result)
+    print(f"[OK] tests_generados/integration/\n")
 
 
 if __name__ == "__main__":
