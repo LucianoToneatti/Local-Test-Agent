@@ -374,3 +374,23 @@ Una vez procesados todos los archivos, `main()` retorna normalmente. Python impr
   contexto), ciclo de feedback LLM→corrección→verificación, límite de intentos para
   evitar bucles infinitos (EXEC-04), separación de responsabilidades entre runner
   (solo mide) y autocorrector (solo corrige).
+
+## HU-09 — Generador de reporte (agent/report_generator.py)
+
+### Qué se implementó
+- `agent/report_generator.py`: módulo con función pública `generate(results, repo_name, elapsed)` que escribe `reporte.md` en la raíz del agente.
+- Helper privado `_last_traceback_line(traceback)`: extrae la última línea no vacía de un traceback para mostrar el mensaje de error más relevante.
+- El reporte incluye: encabezado con nombre de repo y fecha, tabla de resumen con conteo de passed/failed/sin_resolver y tiempo total, sección de tests fallidos (omitida si vacía), sección de tests sin resolver (omitida si vacía).
+- Los tests que pasaron no se listan individualmente — solo su conteo en la tabla.
+
+### Decisiones clave
+- **Ruta fija con `Path(__file__).parent`**: garantiza que `reporte.md` se genere junto a `agent.py` independientemente del directorio de trabajo desde el que se invoque el agente. Alternativa rechazada: `Path.cwd()` — frágil si se llama desde otro directorio.
+- **Secciones condicionales**: si no hay tests fallidos o sin resolver, la sección correspondiente se omite completamente. Esto mantiene el reporte limpio para ejecuciones exitosas.
+- **`elapsed:.1f`**: un decimal es suficiente para comunicar la duración; más decimales añaden ruido sin valor informativo para el usuario final.
+- **Monkeypatch de `_OUTPUT_PATH`**: los tests parchean la variable de módulo `_OUTPUT_PATH` con `tmp_path` para evitar escribir en el filesystem real durante las pruebas, sin necesidad de refactorizar la función para recibir el path como argumento.
+
+### Conceptos teóricos aplicados
+- **`pathlib.Path(__file__)`**: resuelve la ruta del módulo en tiempo de importación — patrón estándar para referencias de ruta relativas al código fuente, no al directorio de trabajo.
+- **`datetime.date.today().isoformat()`**: produce fechas en formato ISO 8601 (`YYYY-MM-DD`) — legible por humanos y sorteable lexicográficamente.
+- **Módulo de sola responsabilidad**: `report_generator` no llama al LLM, no ejecuta tests, no lee archivos Python — solo transforma un dict de resultados en Markdown. Esto facilita el testing unitario y el reuso.
+- **`f"{elapsed:.1f}s"`**: format spec de Python para floats con 1 decimal fijo — evita notación científica y garantiza consistencia de formato.
