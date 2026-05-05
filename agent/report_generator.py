@@ -9,7 +9,7 @@ y el tiempo total de ejecución.
 import datetime
 import pathlib
 
-_OUTPUT_PATH = pathlib.Path(__file__).parent / "reporte.md"
+_OUTPUT_PATH = pathlib.Path(__file__).parent.parent / "reporte.md"
 
 
 def generate(results: dict, repo_name: str, elapsed: float) -> None:
