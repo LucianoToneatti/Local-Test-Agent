@@ -394,3 +394,26 @@ Una vez procesados todos los archivos, `main()` retorna normalmente. Python impr
 - **`datetime.date.today().isoformat()`**: produce fechas en formato ISO 8601 (`YYYY-MM-DD`) — legible por humanos y sorteable lexicográficamente.
 - **Módulo de sola responsabilidad**: `report_generator` no llama al LLM, no ejecuta tests, no lee archivos Python — solo transforma un dict de resultados en Markdown. Esto facilita el testing unitario y el reuso.
 - **`f"{elapsed:.1f}s"`**: format spec de Python para floats con 1 decimal fijo — evita notación científica y garantiza consistencia de formato.
+
+## HU-10 — CLI Completa (refactor de agent.py)
+
+### Qué se implementó
+- Eliminación de funciones inline duplicadas de `agent.py`: `_CONFTEST_TEMPLATE`, `write_conftest()`, `extract_functions()`, `process_file()`, constantes `_ROOT` y `OUTPUT_DIR`.
+- Reemplazo del loop de generación de tests unitarios por llamada directa a `test_generator.generate(str(repo), ast_result)`.
+- Cálculo único de `ast_result = extract(explore(str(repo)), str(repo))` reutilizado para generación unitaria e integración (antes se calculaba dos veces).
+- Medición de tiempo total: `start = time.time()` como primera línea de `main()`, `elapsed = time.time() - start` antes del reporte.
+- Integración de `report_generator.generate(final, repo.name, elapsed)` al final del flujo, con mensajes de progreso `[*] Generando reporte...` y `[OK] Reporte generado: reporte.md`.
+- Eliminación de imports obsoletos: `ast`, `PromptBuilder`, `clean_response`.
+
+### Decisiones clave
+- **Eliminar funciones inline en lugar de refactorizar a un módulo nuevo**: `test_generator.generate()` ya implementaba la misma lógica con mejor cobertura de casos (fragmentación de archivos >200 líneas, manejo de clases, etc.). Mantener las funciones inline habría creado dos implementaciones divergentes de la misma responsabilidad.
+- **`ast_result` calculado una sola vez**: el resultado de `extract(explore(...))` es inmutable y se puede reutilizar para todos los generadores. La versión anterior lo recalculaba en la línea de generación de integración, duplicando I/O y procesamiento.
+- **`time.time()` como primera línea de `main()`**: garantiza que el tiempo medido incluye todo el procesamiento — validación de argumentos, verificación de Ollama, exploración, generación, ejecución y autocorrección. Medir desde un punto posterior subestimaría el tiempo real percibido por el usuario.
+- **`repo.name` como `repo_name`**: el atributo `.name` de `pathlib.Path.resolve()` da el nombre del directorio final sin ruta completa ni trailing slash — es el identificador más legible para el usuario en el reporte.
+- **`final = {}` como fallback**: si `run_tests()` retorna vacío (pytest no instalado, sin tests generados), se llama a `report_generator.generate({}, ...)` de todas formas para que siempre se produzca un `reporte.md` al final del flujo.
+
+### Conceptos teóricos aplicados
+- **Principio DRY (Don't Repeat Yourself)**: el refactor elimina la duplicación entre las funciones inline de `agent.py` y los módulos del agente. Cada responsabilidad queda en un único lugar.
+- **Flujo de datos unidireccional en CLI**: `agent.py` actúa como orquestador puro — lee el argumento `--repo`, delega en módulos especializados en secuencia, y presenta resultados al usuario. No contiene lógica de dominio.
+- **`time.time()` para wall-clock time**: mide el tiempo real transcurrido desde la perspectiva del usuario, incluyendo I/O, espera de subprocesos y llamadas al LLM. Alternativa `time.process_time()` mediría solo CPU — inadecuado para un agente que espera I/O.
+- **Separación de mensajes de progreso y lógica**: `agent.py` imprime los mensajes `[*]`/`[OK]`; los módulos internos no saben si están siendo invocados desde CLI o desde tests — esto facilita el testing sin captura de stdout.
