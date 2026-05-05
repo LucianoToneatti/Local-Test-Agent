@@ -417,3 +417,16 @@ Una vez procesados todos los archivos, `main()` retorna normalmente. Python impr
 - **Flujo de datos unidireccional en CLI**: `agent.py` actúa como orquestador puro — lee el argumento `--repo`, delega en módulos especializados en secuencia, y presenta resultados al usuario. No contiene lógica de dominio.
 - **`time.time()` para wall-clock time**: mide el tiempo real transcurrido desde la perspectiva del usuario, incluyendo I/O, espera de subprocesos y llamadas al LLM. Alternativa `time.process_time()` mediría solo CPU — inadecuado para un agente que espera I/O.
 - **Separación de mensajes de progreso y lógica**: `agent.py` imprime los mensajes `[*]`/`[OK]`; los módulos internos no saben si están siendo invocados desde CLI o desde tests — esto facilita el testing sin captura de stdout.
+
+## Fix — Ruta de reporte.md (agent/report_generator.py)
+
+### Qué se corrigió
+`_OUTPUT_PATH` usaba `pathlib.Path(__file__).parent / "reporte.md"`, que resuelve a `agent/reporte.md` (el directorio del módulo). El usuario ejecuta `python3 agent.py` desde la raíz del proyecto y esperaba encontrar `reporte.md` en ese mismo directorio.
+
+Corrección: `pathlib.Path(__file__).parent.parent / "reporte.md"` — sube un nivel desde `agent/` hasta la raíz del proyecto.
+
+### Por qué el bug no se detectó en tests
+Los tests de `test_report_generator.py` usan `monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)` para redirigir la escritura a `tmp_path`. Eso hace que el path real de `_OUTPUT_PATH` sea irrelevante durante las pruebas — los tests pasan aunque el path apunte al lugar equivocado.
+
+### Lección
+`pathlib.Path(__file__).parent` es correcto para referenciar archivos estáticos dentro del mismo paquete (templates, datos). Para archivos de salida destinados al usuario, la raíz del proyecto es más intuitiva. Cuando el nombre de archivo en el print no incluye la ruta relativa (`reporte.md` en lugar de `agent/reporte.md`), el usuario espera encontrarlo en el directorio de trabajo actual.

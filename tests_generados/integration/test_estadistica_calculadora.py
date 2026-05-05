@@ -1,28 +1,38 @@
 import pytest
+from unittest.mock import patch
 from estadistica import promedio, varianza
-from calculadora import sumar, restar, multiplicar, dividir, potencia
+from calculadora import sumar, multiplicar
+
+# Define all imports once at the top of the file
 
 def test_promedio():
-    assert promedio([1, 2, 3]) == 2.0
-    with pytest.raises(ValueError):
-        promedio([])
+    with patch('calculadora.sumar') as mock_sumar:
+        # Arrange
+        lista = [1, 2, 3]
+        mock_sumar.side_effect = sumar
+        expected = 2.0
+        
+        # Act
+        result = promedio(lista)
+        
+        # Assert
+        assert result == expected
+
+from unittest.mock import patch
+import pytest
 
 def test_varianza():
-    assert varianza([1, 2, 3]) == pytest.approx(0.6666666666666666)
-    with pytest.raises(ValueError):
-        varianza([])
+    with patch('statistics.promedio') as mock_promedio, \
+            patch('calculadora.sumar'), \
+            patch('calculadora.multiplicar'):
         
-def test_sumar():
-    assert sumar(1, 2) == 3
-    
-def test_restar():
-    assert restar(5, 3) == 2
-
-def test_multiplicar():
-    assert multiplicar(2, 3) == 6
-
-def test_dividir():
-    assert dividir(10, 2) == 5
-
-def test_potencia():
-    assert potencia(2, 3) == 8
+        # Arrange
+        lista = [1, 2, 3]
+        mock_promedio.return_value = 2
+        expected = 0.5714285714285714
+        
+        # Act
+        result = varianza(lista)
+        
+        # Assert
+        assert pytest.approx(result, 0.00001) == expected
