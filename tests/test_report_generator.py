@@ -178,6 +178,26 @@ def test_generate_empty_results(tmp_path, monkeypatch):
     assert "**Total:** 0 tests" in content
 
 
+def test_generate_unresolved_section_shows_traceback_from_attempts(tmp_path, monkeypatch):
+    output_file = tmp_path / "reporte.md"
+    monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)
+    tb = (
+        "Traceback (most recent call last):\n"
+        "  File 'test_calc.py', line 8\n"
+        "AssertionError: expected 4 got 5"
+    )
+    results = {
+        "tests/test_calc.py::test_raiz": {
+            "status": "sin_resolver",
+            "traceback": None,
+            "attempts": [{"traceback": tb, "generated_code": "a"}],
+        },
+    }
+    rg.generate(results, "myrepo", 1.0)
+    content = output_file.read_text()
+    assert "`AssertionError: expected 4 got 5`" in content
+
+
 def test_generate_error_status_counts_as_failed(tmp_path, monkeypatch):
     output_file = tmp_path / "reporte.md"
     monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)

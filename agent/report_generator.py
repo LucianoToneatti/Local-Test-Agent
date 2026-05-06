@@ -70,8 +70,15 @@ def generate(results: dict, repo_name: str, elapsed: float) -> None:
         ]
         for tid, v in unresolved_items:
             n_attempts = len(v.get("attempts", []))
+            tb = v.get("traceback")
+            if not tb:
+                attempts_list = v.get("attempts", [])
+                if attempts_list and isinstance(attempts_list[0], dict):
+                    tb = attempts_list[0].get("traceback")
+            last_line = _last_traceback_line(tb)
             lines.append(f"- `{tid}`")
             lines.append(f"  ({n_attempts} intentos agotados)")
+            lines.append(f"  `{last_line}`")
 
     content = "\n".join(lines) + "\n"
     _OUTPUT_PATH.write_text(content, encoding="utf-8")
