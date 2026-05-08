@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agent.test_runner import _attach_tracebacks, _parse_output, run
+from agent.test_runner import _attach_collection_tracebacks, _attach_tracebacks, _parse_output, run
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +141,65 @@ def test_run_subprocess_called_with_list(tmp_path, monkeypatch):
         run(str(tmp_path))
     call_args = mock_run.call_args
     assert isinstance(call_args[0][0], list)
+
+
+# ---------------------------------------------------------------------------
+# _parse_output() — collection errors (módulo no importable)
+# ---------------------------------------------------------------------------
+
+_COLLECTION_ERROR_OUTPUT = (
+    "============================= test session starts ==============================\n"
+    "collecting ... collected 0 items / 1 error\n"
+    "\n"
+    "==================================== ERRORS ====================================\n"
+    "_____________ ERROR collecting tests_generados/unit/test_pacman.py _____________\n"
+    "ImportError while importing test module '/tmp/test_pacman.py'.\n"
+    "tests_generados/unit/test_pacman.py:1: in <module>\n"
+    "    from pacman import setupRoomOne\n"
+    "E   ModuleNotFoundError: No module named 'pygame'\n"
+    "=========================== short test summary info ============================\n"
+    "ERROR tests_generados/unit/test_pacman.py\n"
+    "!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n"
+)
+
+
+def test_parse_output_collection_error_creates_entry():
+    result = _parse_output(_COLLECTION_ERROR_OUTPUT)
+    assert "tests_generados/unit/test_pacman.py" in result
+
+
+def test_parse_output_collection_error_status_is_error():
+    result = _parse_output(_COLLECTION_ERROR_OUTPUT)
+    assert result["tests_generados/unit/test_pacman.py"]["status"] == "error"
+
+
+def test_parse_output_collection_error_traceback_contains_module_error():
+    result = _parse_output(_COLLECTION_ERROR_OUTPUT)
+    tb = result["tests_generados/unit/test_pacman.py"]["traceback"]
+    assert tb is not None
+    assert "ModuleNotFoundError" in tb
+
+
+def test_attach_collection_tracebacks_assigns_traceback():
+    output = (
+        "==================================== ERRORS ====================================\n"
+        "_____________ ERROR collecting tests_generados/unit/test_foo.py _____________\n"
+        "ImportError: No module named 'bar'\n"
+        "E   ModuleNotFoundError: No module named 'bar'\n"
+        "=========================== short test summary info ============================\n"
+    )
+    results = {"tests_generados/unit/test_foo.py": {"status": "error", "traceback": None}}
+    _attach_collection_tracebacks(output, results)
+    tb = results["tests_generados/unit/test_foo.py"]["traceback"]
+    assert tb is not None
+    assert "ModuleNotFoundError" in tb
+
+
+def test_attach_collection_tracebacks_no_match_leaves_none():
+    output = "no collection errors here\n"
+    results = {"tests_generados/unit/test_foo.py": {"status": "error", "traceback": None}}
+    _attach_collection_tracebacks(output, results)
+    assert results["tests_generados/unit/test_foo.py"]["traceback"] is None
 
 
 def test_run_captures_stderr(tmp_path, monkeypatch, capsys):

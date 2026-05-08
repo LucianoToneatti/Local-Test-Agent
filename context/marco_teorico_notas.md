@@ -374,3 +374,101 @@ Una vez procesados todos los archivos, `main()` retorna normalmente. Python impr
   contexto), ciclo de feedback LLM→corrección→verificación, límite de intentos para
   evitar bucles infinitos (EXEC-04), separación de responsabilidades entre runner
   (solo mide) y autocorrector (solo corrige).
+
+## HU-09 — Generador de reporte (agent/report_generator.py)
+
+### Qué se implementó
+- `agent/report_generator.py`: módulo con función pública `generate(results, repo_name, elapsed)` que escribe `reporte.md` en la raíz del agente.
+- Helper privado `_last_traceback_line(traceback)`: extrae la última línea no vacía de un traceback para mostrar el mensaje de error más relevante.
+- El reporte incluye: encabezado con nombre de repo y fecha, tabla de resumen con conteo de passed/failed/sin_resolver y tiempo total, sección de tests fallidos (omitida si vacía), sección de tests sin resolver (omitida si vacía).
+- Los tests que pasaron no se listan individualmente — solo su conteo en la tabla.
+
+### Decisiones clave
+- **Ruta fija con `Path(__file__).parent`**: garantiza que `reporte.md` se genere junto a `agent.py` independientemente del directorio de trabajo desde el que se invoque el agente. Alternativa rechazada: `Path.cwd()` — frágil si se llama desde otro directorio.
+- **Secciones condicionales**: si no hay tests fallidos o sin resolver, la sección correspondiente se omite completamente. Esto mantiene el reporte limpio para ejecuciones exitosas.
+- **`elapsed:.1f`**: un decimal es suficiente para comunicar la duración; más decimales añaden ruido sin valor informativo para el usuario final.
+- **Monkeypatch de `_OUTPUT_PATH`**: los tests parchean la variable de módulo `_OUTPUT_PATH` con `tmp_path` para evitar escribir en el filesystem real durante las pruebas, sin necesidad de refactorizar la función para recibir el path como argumento.
+
+### Conceptos teóricos aplicados
+- **`pathlib.Path(__file__)`**: resuelve la ruta del módulo en tiempo de importación — patrón estándar para referencias de ruta relativas al código fuente, no al directorio de trabajo.
+- **`datetime.date.today().isoformat()`**: produce fechas en formato ISO 8601 (`YYYY-MM-DD`) — legible por humanos y sorteable lexicográficamente.
+- **Módulo de sola responsabilidad**: `report_generator` no llama al LLM, no ejecuta tests, no lee archivos Python — solo transforma un dict de resultados en Markdown. Esto facilita el testing unitario y el reuso.
+- **`f"{elapsed:.1f}s"`**: format spec de Python para floats con 1 decimal fijo — evita notación científica y garantiza consistencia de formato.
+
+## HU-10 — CLI Completa (refactor de agent.py)
+
+### Qué se implementó
+- Eliminación de funciones inline duplicadas de `agent.py`: `_CONFTEST_TEMPLATE`, `write_conftest()`, `extract_functions()`, `process_file()`, constantes `_ROOT` y `OUTPUT_DIR`.
+- Reemplazo del loop de generación de tests unitarios por llamada directa a `test_generator.generate(str(repo), ast_result)`.
+- Cálculo único de `ast_result = extract(explore(str(repo)), str(repo))` reutilizado para generación unitaria e integración (antes se calculaba dos veces).
+- Medición de tiempo total: `start = time.time()` como primera línea de `main()`, `elapsed = time.time() - start` antes del reporte.
+- Integración de `report_generator.generate(final, repo.name, elapsed)` al final del flujo, con mensajes de progreso `[*] Generando reporte...` y `[OK] Reporte generado: reporte.md`.
+- Eliminación de imports obsoletos: `ast`, `PromptBuilder`, `clean_response`.
+
+### Decisiones clave
+- **Eliminar funciones inline en lugar de refactorizar a un módulo nuevo**: `test_generator.generate()` ya implementaba la misma lógica con mejor cobertura de casos (fragmentación de archivos >200 líneas, manejo de clases, etc.). Mantener las funciones inline habría creado dos implementaciones divergentes de la misma responsabilidad.
+- **`ast_result` calculado una sola vez**: el resultado de `extract(explore(...))` es inmutable y se puede reutilizar para todos los generadores. La versión anterior lo recalculaba en la línea de generación de integración, duplicando I/O y procesamiento.
+- **`time.time()` como primera línea de `main()`**: garantiza que el tiempo medido incluye todo el procesamiento — validación de argumentos, verificación de Ollama, exploración, generación, ejecución y autocorrección. Medir desde un punto posterior subestimaría el tiempo real percibido por el usuario.
+- **`repo.name` como `repo_name`**: el atributo `.name` de `pathlib.Path.resolve()` da el nombre del directorio final sin ruta completa ni trailing slash — es el identificador más legible para el usuario en el reporte.
+- **`final = {}` como fallback**: si `run_tests()` retorna vacío (pytest no instalado, sin tests generados), se llama a `report_generator.generate({}, ...)` de todas formas para que siempre se produzca un `reporte.md` al final del flujo.
+
+### Conceptos teóricos aplicados
+- **Principio DRY (Don't Repeat Yourself)**: el refactor elimina la duplicación entre las funciones inline de `agent.py` y los módulos del agente. Cada responsabilidad queda en un único lugar.
+- **Flujo de datos unidireccional en CLI**: `agent.py` actúa como orquestador puro — lee el argumento `--repo`, delega en módulos especializados en secuencia, y presenta resultados al usuario. No contiene lógica de dominio.
+- **`time.time()` para wall-clock time**: mide el tiempo real transcurrido desde la perspectiva del usuario, incluyendo I/O, espera de subprocesos y llamadas al LLM. Alternativa `time.process_time()` mediría solo CPU — inadecuado para un agente que espera I/O.
+- **Separación de mensajes de progreso y lógica**: `agent.py` imprime los mensajes `[*]`/`[OK]`; los módulos internos no saben si están siendo invocados desde CLI o desde tests — esto facilita el testing sin captura de stdout.
+
+## Fix — Collection errors en test_runner.py (prueba con Pacman)
+
+### Contexto
+Prueba de HU-10 con repositorio real: [hbokmann/Pacman](https://github.com/hbokmann/Pacman), juego de Pacman en Python con pygame. El agente generó los tests correctamente en `tests_generados/unit/`, pero el reporte final mostraba 0 tests (0 passed, 0 failed, 0 sin resolver).
+
+### Causa raíz
+`pacman.py` importa `pygame` como dependencia de runtime. Los tests generados hacen `from pacman import setupRoomOne`, lo que carga `pacman.py` → `import pygame._view` → `ModuleNotFoundError`. pytest llama a esto un **collection error**: no puede ni siquiera recolectar los tests del archivo, por lo que no llega a ejecutar ninguno.
+
+El formato de salida de pytest para un collection error es:
+```
+ERROR tests_generados/unit/test_pacman.py
+```
+sin `::nombre_de_test`. El regex original de `_parse_output` solo matcheaba `path::test_nombre STATUS`, por lo que este caso producía un dict vacío.
+
+Con `results = {}`, la rama `if results:` de `agent.py` es `False` → `final = {}` → reporte 0 tests.
+
+### Distinción clave: collection error vs. test failure
+| Tipo | Formato en pytest stdout | Causa |
+|------|--------------------------|-------|
+| Test failure | `path/test.py::test_nombre FAILED` | El test se ejecutó y falló |
+| Collection error | `ERROR path/test.py` | pytest no pudo importar el archivo |
+
+Un collection error ocurre **antes** de que pytest llegue a ejecutar ningún test. Es causado por dependencias faltantes en el módulo bajo test, errores de sintaxis en el archivo de test, o imports circulares.
+
+### Solución implementada (agent/test_runner.py)
+1. **Segundo regex en `_parse_output`**: `r"^ERROR\s+([\w/\\. :-]+\.py)"` captura las líneas `ERROR path/file.py` de la sección "short test summary". El key en el dict de resultados es la ruta del archivo (sin `::nombre`).
+2. **`_attach_collection_tracebacks`**: nueva función análoga a `_attach_tracebacks`, captura el bloque `_____ ERROR collecting path/file.py _____` del output y lo adjunta como traceback — incluye el `ModuleNotFoundError` o `ImportError` completo.
+3. **Compatibilidad con autocorrector**: `autocorrector._split_test_id()` ya tenía `if "::" not in test_id: return None, None`, por lo que los collection errors (sin `::`) se saltan graciosamente sin modificación adicional.
+
+### Consecuencia en el reporte
+Un collection error ahora aparece en la sección "Tests fallidos" del reporte con:
+```
+- `tests_generados/unit/test_pacman.py`
+  `E   ModuleNotFoundError: No module named 'pygame'`
+```
+Esto le dice al usuario exactamente qué archivo no pudo ejecutarse y por qué, en lugar de silenciar el problema con 0 tests.
+
+### Lección de diseño
+El parseo de output de CLIs externas debe considerar todos los exit codes y formatos posibles, no solo el happy path. pytest tiene al menos 4 exit codes: 0 (todo pasó), 1 (tests fallaron), 2 (error de colección/interrupción), 3 (error interno). El código original solo manejaba 0 y 1.
+
+---
+
+## Fix — Ruta de reporte.md (agent/report_generator.py)
+
+### Qué se corrigió
+`_OUTPUT_PATH` usaba `pathlib.Path(__file__).parent / "reporte.md"`, que resuelve a `agent/reporte.md` (el directorio del módulo). El usuario ejecuta `python3 agent.py` desde la raíz del proyecto y esperaba encontrar `reporte.md` en ese mismo directorio.
+
+Corrección: `pathlib.Path(__file__).parent.parent / "reporte.md"` — sube un nivel desde `agent/` hasta la raíz del proyecto.
+
+### Por qué el bug no se detectó en tests
+Los tests de `test_report_generator.py` usan `monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)` para redirigir la escritura a `tmp_path`. Eso hace que el path real de `_OUTPUT_PATH` sea irrelevante durante las pruebas — los tests pasan aunque el path apunte al lugar equivocado.
+
+### Lección
+`pathlib.Path(__file__).parent` es correcto para referenciar archivos estáticos dentro del mismo paquete (templates, datos). Para archivos de salida destinados al usuario, la raíz del proyecto es más intuitiva. Cuando el nombre de archivo en el print no incluye la ruta relativa (`reporte.md` en lugar de `agent/reporte.md`), el usuario espera encontrarlo en el directorio de trabajo actual.
