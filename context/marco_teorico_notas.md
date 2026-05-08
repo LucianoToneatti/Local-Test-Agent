@@ -418,6 +418,48 @@ Una vez procesados todos los archivos, `main()` retorna normalmente. Python impr
 - **`time.time()` para wall-clock time**: mide el tiempo real transcurrido desde la perspectiva del usuario, incluyendo I/O, espera de subprocesos y llamadas al LLM. Alternativa `time.process_time()` mediría solo CPU — inadecuado para un agente que espera I/O.
 - **Separación de mensajes de progreso y lógica**: `agent.py` imprime los mensajes `[*]`/`[OK]`; los módulos internos no saben si están siendo invocados desde CLI o desde tests — esto facilita el testing sin captura de stdout.
 
+## Fix — Collection errors en test_runner.py (prueba con Pacman)
+
+### Contexto
+Prueba de HU-10 con repositorio real: [hbokmann/Pacman](https://github.com/hbokmann/Pacman), juego de Pacman en Python con pygame. El agente generó los tests correctamente en `tests_generados/unit/`, pero el reporte final mostraba 0 tests (0 passed, 0 failed, 0 sin resolver).
+
+### Causa raíz
+`pacman.py` importa `pygame` como dependencia de runtime. Los tests generados hacen `from pacman import setupRoomOne`, lo que carga `pacman.py` → `import pygame._view` → `ModuleNotFoundError`. pytest llama a esto un **collection error**: no puede ni siquiera recolectar los tests del archivo, por lo que no llega a ejecutar ninguno.
+
+El formato de salida de pytest para un collection error es:
+```
+ERROR tests_generados/unit/test_pacman.py
+```
+sin `::nombre_de_test`. El regex original de `_parse_output` solo matcheaba `path::test_nombre STATUS`, por lo que este caso producía un dict vacío.
+
+Con `results = {}`, la rama `if results:` de `agent.py` es `False` → `final = {}` → reporte 0 tests.
+
+### Distinción clave: collection error vs. test failure
+| Tipo | Formato en pytest stdout | Causa |
+|------|--------------------------|-------|
+| Test failure | `path/test.py::test_nombre FAILED` | El test se ejecutó y falló |
+| Collection error | `ERROR path/test.py` | pytest no pudo importar el archivo |
+
+Un collection error ocurre **antes** de que pytest llegue a ejecutar ningún test. Es causado por dependencias faltantes en el módulo bajo test, errores de sintaxis en el archivo de test, o imports circulares.
+
+### Solución implementada (agent/test_runner.py)
+1. **Segundo regex en `_parse_output`**: `r"^ERROR\s+([\w/\\. :-]+\.py)"` captura las líneas `ERROR path/file.py` de la sección "short test summary". El key en el dict de resultados es la ruta del archivo (sin `::nombre`).
+2. **`_attach_collection_tracebacks`**: nueva función análoga a `_attach_tracebacks`, captura el bloque `_____ ERROR collecting path/file.py _____` del output y lo adjunta como traceback — incluye el `ModuleNotFoundError` o `ImportError` completo.
+3. **Compatibilidad con autocorrector**: `autocorrector._split_test_id()` ya tenía `if "::" not in test_id: return None, None`, por lo que los collection errors (sin `::`) se saltan graciosamente sin modificación adicional.
+
+### Consecuencia en el reporte
+Un collection error ahora aparece en la sección "Tests fallidos" del reporte con:
+```
+- `tests_generados/unit/test_pacman.py`
+  `E   ModuleNotFoundError: No module named 'pygame'`
+```
+Esto le dice al usuario exactamente qué archivo no pudo ejecutarse y por qué, en lugar de silenciar el problema con 0 tests.
+
+### Lección de diseño
+El parseo de output de CLIs externas debe considerar todos los exit codes y formatos posibles, no solo el happy path. pytest tiene al menos 4 exit codes: 0 (todo pasó), 1 (tests fallaron), 2 (error de colección/interrupción), 3 (error interno). El código original solo manejaba 0 y 1.
+
+---
+
 ## Fix — Ruta de reporte.md (agent/report_generator.py)
 
 ### Qué se corrigió

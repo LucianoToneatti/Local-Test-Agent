@@ -49,6 +49,11 @@ def _parse_output(output: str) -> dict:
     El formato de una línea de resultado en pytest -v es:
       path/test_file.py::test_nombre STATUS
     donde STATUS es PASSED, FAILED o ERROR.
+
+    También captura collection errors (ImportError, ModuleNotFoundError al
+    importar el módulo de test), que pytest reporta como:
+      ERROR path/test_file.py
+    sin ::nombre de función. Estos se registran con el path del archivo como key.
     """
     results = {}
 
@@ -60,9 +65,34 @@ def _parse_output(output: str) -> dict:
         status = match.group(2).lower()
         results[test_id] = {"status": status, "traceback": None}
 
+    # Collection errors: el archivo no pudo importarse; pytest no llega a
+    # enumerar tests individuales. El key es la ruta del archivo (sin ::nombre).
+    coll_re = re.compile(r"^ERROR\s+([\w/\\. :-]+\.py)", re.MULTILINE)
+    for match in coll_re.finditer(output):
+        file_path = match.group(1)
+        if file_path not in results:
+            results[file_path] = {"status": "error", "traceback": None}
+
     _attach_tracebacks(output, results)
+    _attach_collection_tracebacks(output, results)
 
     return results
+
+
+def _attach_collection_tracebacks(output: str, results: dict) -> None:
+    """
+    Captura bloques de error de colección (ERROR collecting path/file.py)
+    y los adjunta al test_id correspondiente (ruta del archivo, sin ::nombre).
+    """
+    block_re = re.compile(
+        r"_{5,}\s+ERROR collecting\s+([\w/\\. :-]+\.py)\s+_{5,}\n(.*?)(?=_{5,}|={5,}|\Z)",
+        re.DOTALL,
+    )
+    for match in block_re.finditer(output):
+        file_path = match.group(1)
+        traceback_text = match.group(2).strip()
+        if file_path in results:
+            results[file_path]["traceback"] = traceback_text
 
 
 def _attach_tracebacks(output: str, results: dict) -> None:
