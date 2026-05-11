@@ -57,6 +57,7 @@ tests_generados/
 
 # Archivos internos de trabajo (no para el repositorio público)
 CLAUDE.md
+.CLAUDE.md
 .planning/
 tests_generados/
 reporte.md
