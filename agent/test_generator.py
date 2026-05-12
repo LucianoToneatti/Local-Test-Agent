@@ -32,11 +32,25 @@ def generate(repo_path: str, ast_result: dict) -> None:
     for rel_path, file_info in ast_result.items():
         blocks = _generate_blocks_for_file(client, repo, rel_path, file_info)
         if blocks:
-            stem = Path(rel_path).stem
-            out_file = OUTPUT_DIR / f"test_{stem}.py"
-            out_file.write_text("\n\n".join(blocks) + "\n")
+            module_name = Path(rel_path).stem
+            header = _build_import_header(module_name, file_info)
+            out_file = OUTPUT_DIR / f"test_{module_name}.py"
+            out_file.write_text(header + "\n\n" + "\n\n".join(blocks) + "\n")
 
     _write_conftest(repo)
+
+
+def _build_import_header(module_name: str, file_info: dict) -> str:
+    """Construye el bloque de imports del archivo de tests: pytest + símbolos del módulo."""
+    lines = ["import pytest"]
+    for func in file_info.get("functions", []):
+        lines.append(f"from {module_name} import {func['name']}")
+    seen: set[str] = set()
+    for cls in file_info.get("classes", []):
+        if cls["name"] not in seen:
+            lines.append(f"from {module_name} import {cls['name']}")
+            seen.add(cls["name"])
+    return "\n".join(lines)
 
 
 def _generate_blocks_for_file(
@@ -99,7 +113,7 @@ def _generate_block(
             class_name=class_name,
         )
         raw = client.generate(prompt.user, system=prompt.system)
-        code = clean_response(raw)
+        code = clean_response(raw, strip_imports=True)
         try:
             ast.parse(code)
             return code

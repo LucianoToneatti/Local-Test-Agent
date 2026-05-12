@@ -57,7 +57,8 @@ class PythonPromptTemplate(PromptTemplate):
         "- NO markdown. Never use triple backticks (```) under any circumstances.\n"
         "- NO explanations, NO introductory sentences, NO comments outside the code.\n"
         "- Your entire response must be valid Python that can be saved directly to a .py file.\n"
-        "- First line of your response must be an import statement.\n"
+        "- Do NOT include any import statements. Output ONLY test functions (def test_...).\n"
+        "- Do NOT include any comments (no # lines).\n"
         "- Use pytest. Cover: happy path, edge case, and expected exception.\n"
         "- Name tests as: test_<function_name>_<scenario>."
     )
@@ -66,21 +67,23 @@ class PythonPromptTemplate(PromptTemplate):
         "Write pytest tests for this Python function:\n\n"
         "{code}\n\n"
         "Function under test: {function_name}\n"
-        "Import it with: from {module_name} import {function_name}\n\n"
+        "Available as: from {module_name} import {function_name} "
+        "(do NOT include this import in your output).\n\n"
         "OUTPUT RULES: raw Python code only. "
-        "No markdown, no backticks, no explanations. "
-        "Start your response directly with 'import'."
+        "No markdown, no backticks, no explanations, no import statements. "
+        "Start your response directly with 'def test_'."
     )
 
     _USER_TEMPLATE_METHOD = (
         "Write pytest tests for this Python method:\n\n"
         "{code}\n\n"
         "Method under test: {function_name} (instance method of class {class_name})\n"
-        "Import it with: from {module_name} import {class_name}\n"
+        "Available as: from {module_name} import {class_name} "
+        "(do NOT include this import in your output).\n"
         "Instantiate the class before calling the method.\n\n"
         "OUTPUT RULES: raw Python code only. "
-        "No markdown, no backticks, no explanations. "
-        "Start your response directly with 'import'."
+        "No markdown, no backticks, no explanations, no import statements. "
+        "Start your response directly with 'def test_'."
     )
 
     def build(
@@ -255,7 +258,7 @@ class PromptBuilder:
         return list(_REGISTRY.keys())
 
 
-def clean_response(response: str) -> str:
+def clean_response(response: str, *, strip_imports: bool = False) -> str:
     """
     Limpia el output del LLM eliminando bloques markdown y texto explicativo.
 
@@ -264,11 +267,13 @@ def clean_response(response: str) -> str:
     2. Si no hay bloques pero hay texto previo al código, descarta todo lo anterior
        a la primera línea que empiece con 'import', 'from' o 'def test_'.
     3. En cualquier caso, elimina backticks sueltos residuales.
+    4. Si strip_imports=True, elimina todas las líneas que empiecen con 'import' o 'from'
+       (para tests unitarios, donde el agente ya provee el header de imports correcto).
     """
     # Paso 1: extraer contenido de bloques markdown si existen
     blocks = re.findall(r"```(?:python)?\n?(.*?)```", response, flags=re.DOTALL)
     if blocks:
-        return "\n\n".join(b.strip() for b in blocks)
+        response = "\n\n".join(b.strip() for b in blocks)
 
     # Paso 2: descartar texto explicativo antes del código
     match = re.search(r"^(import |from |def test_)", response, re.MULTILINE)
@@ -277,6 +282,13 @@ def clean_response(response: str) -> str:
 
     # Paso 3: eliminar backticks sueltos
     response = response.replace("`", "")
+
+    # Paso 4: eliminar líneas de import si el agente provee el header
+    if strip_imports:
+        response = "\n".join(
+            line for line in response.splitlines()
+            if not line.lstrip().startswith(("import ", "from "))
+        )
 
     return response.strip()
 

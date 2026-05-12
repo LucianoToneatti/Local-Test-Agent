@@ -72,7 +72,7 @@ def _correct_test(client: LLMClient, test_id: str, info: dict, repo_path: str) -
             module_signatures=module_sigs,
         )
         raw = client.generate(prompt.user, system=prompt.system)
-        corrected_code = clean_response(raw)
+        corrected_code = clean_response(raw, strip_imports=True)
 
         attempts.append({"traceback": traceback or None, "generated_code": corrected_code})
 

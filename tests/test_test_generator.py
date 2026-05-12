@@ -9,9 +9,11 @@ from agent.test_generator import (
     generate,
     _slice_source,
     _generate_block,
+    _build_import_header,
     _write_conftest,
     OUTPUT_DIR,
 )
+from prompts.prompt_builder import clean_response
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +79,7 @@ def test_write_conftest_content_format(tmp_path, monkeypatch):
 # Tests de _generate_block (con mock de LLMClient)
 # ---------------------------------------------------------------------------
 
-VALID_CODE = "import pytest\ndef test_f():\n    assert True\n"
+VALID_CODE = "def test_f():\n    assert True\n"
 INVALID_CODE = "esto no es python @@##"
 
 
@@ -128,6 +130,73 @@ def test_generate_block_with_class_name():
 
     assert len(captured_prompts) >= 1
     assert "MyClass" in captured_prompts[0]
+
+
+# ---------------------------------------------------------------------------
+# Tests de clean_response con strip_imports
+# ---------------------------------------------------------------------------
+
+def test_clean_response_strip_imports_removes_import_lines():
+    raw = "import pytest\nfrom calc import add\ndef test_add():\n    assert add(1, 2) == 3\n"
+    result = clean_response(raw, strip_imports=True)
+    assert "import pytest" not in result
+    assert "from calc import add" not in result
+    assert "def test_add" in result
+
+
+def test_clean_response_strip_imports_removes_mid_file_imports():
+    raw = (
+        "def test_a():\n    assert True\n\n"
+        "from calc import sub\n\n"
+        "def test_b():\n    assert True\n"
+    )
+    result = clean_response(raw, strip_imports=True)
+    assert "from calc import sub" not in result
+    assert "def test_a" in result
+    assert "def test_b" in result
+
+
+def test_clean_response_strip_imports_false_preserves_imports():
+    raw = "import pytest\nfrom calc import add\ndef test_add():\n    assert True\n"
+    result = clean_response(raw, strip_imports=False)
+    assert "import pytest" in result
+    assert "from calc import add" in result
+
+
+# ---------------------------------------------------------------------------
+# Tests de _build_import_header
+# ---------------------------------------------------------------------------
+
+def test_build_import_header_functions():
+    file_info = {
+        "functions": [{"name": "add"}, {"name": "sub"}],
+        "classes": [],
+    }
+    header = _build_import_header("calc", file_info)
+    lines = header.splitlines()
+    assert lines[0] == "import pytest"
+    assert "from calc import add" in lines
+    assert "from calc import sub" in lines
+
+
+def test_build_import_header_class_deduplication():
+    file_info = {
+        "functions": [],
+        "classes": [
+            {"name": "Calc", "methods": [{"name": "add"}, {"name": "sub"}]},
+        ],
+    }
+    header = _build_import_header("calc", file_info)
+    assert header.count("from calc import Calc") == 1
+
+
+def test_build_import_header_no_repeated_pytest():
+    file_info = {
+        "functions": [{"name": "f1"}, {"name": "f2"}],
+        "classes": [],
+    }
+    header = _build_import_header("mod", file_info)
+    assert header.count("import pytest") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +268,25 @@ def test_generate_calls_llm_once_per_function(tmp_path, monkeypatch):
         generate(repo, ast_result)
 
     assert mock_instance.generate.call_count == 3
+
+
+def test_generate_imports_appear_once_at_top(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    repo = _make_repo_with_calc(tmp_path / "repo")
+    ast_result = _make_ast_result_for_calc()
+
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = VALID_CODE
+        generate(repo, ast_result)
+
+    content = (tmp_path / "tests_generados" / "unit" / "test_calc.py").read_text()
+    assert content.count("import pytest") == 1
+    assert content.count("from calc import add") == 1
+    assert content.count("from calc import sub") == 1
+    assert content.count("from calc import mul") == 1
+    # El header de imports debe estar al principio del archivo
+    first_line = content.splitlines()[0]
+    assert first_line == "import pytest"
 
 
 def test_generate_skips_file_with_no_functions(tmp_path, monkeypatch):
