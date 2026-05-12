@@ -202,6 +202,46 @@ def test_attach_collection_tracebacks_no_match_leaves_none():
     assert results["tests_generados/unit/test_foo.py"]["traceback"] is None
 
 
+_MIXED_OUTPUT = (
+    "============================= test session starts ==============================\n"
+    "collecting ... collected 2 items / 1 error\n"
+    "\n"
+    "tests_generados/unit/test_good.py::test_always_passes PASSED             [ 50%]\n"
+    "tests_generados/unit/test_good.py::test_another_pass PASSED              [100%]\n"
+    "\n"
+    "==================================== ERRORS ====================================\n"
+    "_____________ ERROR collecting tests_generados/unit/test_bad.py _____________\n"
+    "ImportError while importing test module '/tmp/test_bad.py'.\n"
+    "E   ModuleNotFoundError: No module named 'nonexistent_module_xyz'\n"
+    "=========================== short test summary info ============================\n"
+    "ERROR tests_generados/unit/test_bad.py\n"
+    "========================== 2 passed, 1 error in 0.05s ==========================\n"
+)
+
+
+def test_parse_output_mixed_passes_and_collection_error():
+    result = _parse_output(_MIXED_OUTPUT)
+    assert result["tests_generados/unit/test_good.py::test_always_passes"]["status"] == "passed"
+    assert result["tests_generados/unit/test_good.py::test_another_pass"]["status"] == "passed"
+    assert result["tests_generados/unit/test_bad.py"]["status"] == "error"
+
+
+def test_parse_output_mixed_passed_count():
+    result = _parse_output(_MIXED_OUTPUT)
+    passed = sum(1 for v in result.values() if v["status"] == "passed")
+    errors = sum(1 for v in result.values() if v["status"] == "error")
+    assert passed == 2
+    assert errors == 1
+
+
+def test_run_subprocess_called_with_continue_on_collection_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    with patch("agent.test_runner.subprocess.run", return_value=_make_subprocess_result()) as mock_run:
+        run(str(tmp_path))
+    cmd = mock_run.call_args[0][0]
+    assert "--continue-on-collection-errors" in cmd
+
+
 def test_run_captures_stderr(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
     with patch(
