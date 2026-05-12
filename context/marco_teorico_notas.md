@@ -531,3 +531,30 @@ El autocorrector (`_correct_test`) extraía la función fallida, la enviaba al L
 
 ### Lección de diseño
 `_replace_function()` hace una sustitución de rango de líneas (`lines[start:end] = new_lines`). Cualquier texto en `new_code` — incluyendo líneas antes del `def` — queda insertado en ese punto del archivo. El contrato de `_replace_function` es recibir exactamente el cuerpo de una función, no un fragmento de archivo completo. Garantizar ese contrato es responsabilidad de quien llama a la función, no de la función misma.
+
+---
+
+## Prueba comparativa de rendimiento por hardware
+
+Mismo agente, mismo modelo (deepseek-coder:6.7b), mismo repositorio de prueba (`codigo-para-testear`, 4 archivos Python).
+
+| Hardware | CPU | GPU | RAM | OS | Tiempo total |
+|----------|-----|-----|-----|----|-------------|
+| PC sin GPU dedicada (PC propia) | no especificado | — | — | — | ~27 minutos |
+| PC con GPU dedicada (PC de amigo) | AMD Ryzen 7 5800X | AMD Radeon RX 6800 16 GB GDDR6 | 16 GB DDR4 2400 MHz dual channel | Linux Mint 21.1 | ~220 segundos (~3:40 min) |
+
+**Factor de mejora: ~7x más rápido con GPU dedicada.**
+
+### Explicación técnica
+
+La inferencia de un LLM es fundamentalmente una operación de álgebra lineal masiva (multiplicaciones de matrices sobre los pesos del modelo). Las GPUs tienen miles de núcleos diseñados para ejecutar estas operaciones en paralelo; las CPUs tienen decenas de núcleos de propósito general que las hacen en serie o con SIMD limitado. DeepSeek Coder 6.7b tiene ~6.7 mil millones de parámetros: cada token generado requiere operar sobre todos ellos. En CPU eso toma cientos de milisegundos por token; en GPU moderna baja a decenas.
+
+Ollama detecta automáticamente la GPU disponible y carga el modelo en VRAM si hay suficiente espacio (la RX 6800 tiene 16 GB, más que suficiente para el modelo cuantizado ~4 GB). Sin GPU, el modelo corre en RAM del sistema con la CPU, que es funcional pero significativamente más lento.
+
+### Conclusión para el proyecto
+
+El rendimiento del agente depende directamente del hardware disponible:
+- **Con GPU dedicada**: 220 segundos para 4 archivos — perfectamente usable en demos y desarrollo iterativo.
+- **Sin GPU dedicada**: ~27 minutos para los mismos 4 archivos — funcional, pero lento para repositorios grandes o demostraciones en vivo.
+
+Para la presentación del TIF, ejecutar el agente en una máquina con GPU o preparar una corrida previa grabada.
