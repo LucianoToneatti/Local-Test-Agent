@@ -34,7 +34,7 @@ def run(tests_dir: str) -> dict:
         return {}
 
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-v", str(tests_path)],
+        [sys.executable, "-m", "pytest", "-v", "--continue-on-collection-errors", str(tests_path)],
         capture_output=True,
         text=True,
     )
