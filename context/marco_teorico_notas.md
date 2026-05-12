@@ -472,3 +472,62 @@ Los tests de `test_report_generator.py` usan `monkeypatch.setattr(rg, "_OUTPUT_P
 
 ### Lección
 `pathlib.Path(__file__).parent` es correcto para referenciar archivos estáticos dentro del mismo paquete (templates, datos). Para archivos de salida destinados al usuario, la raíz del proyecto es más intuitiva. Cuando el nombre de archivo en el print no incluye la ruta relativa (`reporte.md` en lugar de `agent/reporte.md`), el usuario espera encontrarlo en el directorio de trabajo actual.
+
+---
+
+## Fix — expanduser() para rutas con ~ (test_generator.py, integration_generator.py)
+
+### Qué se corrigió
+Al invocar el agente con `--repo ~/mis-proyectos/repo`, el tilde `~` no se expandía a la ruta del home del usuario. `Path("~/mis-proyectos/repo").resolve()` retorna la ruta tal cual con `~` si no se llama `expanduser()` primero, produciendo un `FileNotFoundError` al intentar leer archivos del repositorio.
+
+Corrección: `Path(repo_path).expanduser().resolve()` en `test_generator.generate()` e `integration_generator.generate()`. `expanduser()` expande `~` al directorio home del usuario antes de que `resolve()` convierta la ruta a absoluta.
+
+### Por qué el bug no se detectó en tests
+Los tests usaban rutas de `tmp_path` (paths absolutos sin `~`), por lo que el caso de tilde nunca se ejercitaba. Se trata de un bug de sistema de archivos que solo aparece en uso real.
+
+### Lección
+`Path.resolve()` no implica `expanduser()`. Son dos operaciones distintas: `expanduser()` interpreta convenciones del shell (`~`, `~user`); `resolve()` convierte a ruta absoluta y resuelve symlinks. Cuando se acepta una ruta del usuario vía CLI, la secuencia correcta es siempre `Path(s).expanduser().resolve()`.
+
+---
+
+## Fix — Imports repetidos e incorrectos en tests unitarios
+
+### Contexto
+Los tests unitarios generados tenían dos problemas de calidad sistemáticos:
+
+1. **Imports repetidos**: cada bloque de test (uno por función) incluía `import pytest` y `from módulo import función`. Al unirlos en un solo archivo con `"\n\n".join(blocks)`, los imports aparecían N veces — una por función del módulo.
+
+2. **Imports incorrectos**: el LLM inventaba nombres de módulos inexistentes (p. ej. `from decimal import Decimal` para un módulo de calculadora simple, `import math`, `import sys`) porque el prompt le pedía que incluyera los imports sin darle los nombres exactos.
+
+### Solución implementada
+
+**`prompts/prompt_builder.py` — `PythonPromptTemplate`:**
+- `_SYSTEM`: reemplazó `"First line must be an import statement"` por `"Do NOT include any import statements. Output ONLY test functions (def test_...)."` y se agregó `"Do NOT include any comments (no # lines)."`. El objetivo es que el LLM produzca bloques de funciones puras, sin decoración.
+- `_USER_TEMPLATE` / `_USER_TEMPLATE_METHOD`: la línea de import del módulo se mantiene como contexto para el LLM (`"Available as: from X import Y (do NOT include this import in your output)"`) pero con instrucción explícita de no incluirla en el output.
+- `clean_response()`: nuevo parámetro keyword-only `strip_imports: bool = False`. Cuando es `True`, filtra todas las líneas que empiecen con `import ` o `from ` después de hacer la limpieza de markdown. Esto actúa como guardrail por si el LLM ignora la instrucción del prompt.
+
+**`agent/test_generator.py`:**
+- Nueva función `_build_import_header(module_name, file_info)`: construye el bloque de imports de forma determinística a partir de los datos que ya tiene el agente (`import pytest` + una línea `from módulo import X` por función/clase, sin duplicados).
+- `generate()`: antepone el header al archivo antes de escribirlo: `header + "\n\n" + "\n\n".join(blocks)`.
+- `_generate_block()`: usa `clean_response(raw, strip_imports=True)`.
+
+### Por qué separar la responsabilidad de los imports
+El agente ya conoce el nombre exacto del módulo y de cada función antes de llamar al LLM (los tiene del `ast_result`). Delegarle esa información al LLM introduce una fuente de error innecesaria. El LLM es responsable de generar la lógica de los tests; el agente es responsable de los imports, que son datos estructurales derivables del AST.
+
+### Conceptos teóricos aplicados
+- **Separación de responsabilidades**: el LLM genera lógica de tests; el agente gestiona los imports.
+- **Guardrail en postprocesamiento**: `strip_imports=True` es un filtro defensivo que corrige outputs del LLM que ignoran las instrucciones del prompt, sin depender exclusivamente del instruction-following del modelo.
+- **`strip_imports=False` como default**: `integration_generator.py` y `autocorrector.py` también usan `clean_response()`. La integración todavía necesita imports en su output (no tiene un `_build_import_header` equivalente), por lo que el parámetro es opt-in.
+
+---
+
+## Fix — Autocorrector reinyectaba imports mid-file (agent/autocorrector.py)
+
+### Causa raíz
+El autocorrector (`_correct_test`) extraía la función fallida, la enviaba al LLM para corregirla, y usaba `clean_response(raw)` sin `strip_imports=True`. El LLM devolvía la función corregida precedida de imports (`import pytest`, `from módulo import X`). Luego `_replace_function()` insertaba ese bloque — imports incluidos — en el lugar exacto de la función original dentro del archivo de test. El resultado eran imports sueltos en el medio del archivo, fuera de cualquier función.
+
+### Solución
+`clean_response(raw, strip_imports=True)` en `_correct_test()`. El autocorrector solo reemplaza una función; los imports del archivo ya están en el header generado por `_build_import_header`. Si la función corregida necesita un símbolo adicional que no estaba en el header original, el test fallará con `NameError` — eso es un problema del LLM, no del pipeline.
+
+### Lección de diseño
+`_replace_function()` hace una sustitución de rango de líneas (`lines[start:end] = new_lines`). Cualquier texto en `new_code` — incluyendo líneas antes del `def` — queda insertado en ese punto del archivo. El contrato de `_replace_function` es recibir exactamente el cuerpo de una función, no un fragmento de archivo completo. Garantizar ese contrato es responsabilidad de quien llama a la función, no de la función misma.
