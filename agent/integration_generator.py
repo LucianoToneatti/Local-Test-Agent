@@ -28,7 +28,7 @@ def generate(repo_path: str, ast_result: dict) -> None:
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     client = LLMClient()
-    repo = Path(repo_path).resolve()
+    repo = Path(repo_path).expanduser().resolve()
 
     pairs = _find_pairs(ast_result)
     for (a_path, b_path) in pairs:

@@ -27,7 +27,7 @@ def generate(repo_path: str, ast_result: dict) -> None:
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     client = LLMClient()
-    repo = Path(repo_path).resolve()
+    repo = Path(repo_path).expanduser().resolve()
 
     for rel_path, file_info in ast_result.items():
         blocks = _generate_blocks_for_file(client, repo, rel_path, file_info)

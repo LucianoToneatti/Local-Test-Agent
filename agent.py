@@ -34,7 +34,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    repo = pathlib.Path(args.repo).resolve()
+    repo = pathlib.Path(args.repo).expanduser().resolve()
     if not repo.is_dir():
         print(f"[ERROR] '{repo}' no es un directorio válido.")
         sys.exit(1)
