@@ -10,6 +10,8 @@ from agent.test_generator import (
     _slice_source,
     _generate_block,
     _build_import_header,
+    _build_js_import_header,
+    _detect_language,
     _write_conftest,
     OUTPUT_DIR,
 )
@@ -306,3 +308,173 @@ def test_generate_skips_file_with_no_functions(tmp_path, monkeypatch):
         generate(repo, ast_result)
 
     assert not (tmp_path / "tests_generados" / "unit" / "test_empty.py").exists()
+
+
+# ---------------------------------------------------------------------------
+# Tests de _detect_language (HU-11)
+# ---------------------------------------------------------------------------
+
+def test_detect_language_py():
+    assert _detect_language("module.py") == "python"
+
+
+def test_detect_language_js():
+    assert _detect_language("app.js") == "javascript"
+
+
+def test_detect_language_ts():
+    assert _detect_language("utils.ts") == "javascript"
+
+
+def test_detect_language_nested_js():
+    assert _detect_language("src/components/Button.js") == "javascript"
+
+
+# ---------------------------------------------------------------------------
+# Tests de _build_js_import_header (HU-11)
+# ---------------------------------------------------------------------------
+
+def test_build_js_import_header_functions():
+    file_info = {"functions": [{"name": "add"}, {"name": "sub"}], "classes": []}
+    header = _build_js_import_header("calc", file_info)
+    assert "require('calc')" in header
+    assert "add" in header
+    assert "sub" in header
+
+
+def test_build_js_import_header_class():
+    file_info = {"functions": [], "classes": [{"name": "Calculator", "methods": []}]}
+    header = _build_js_import_header("calc", file_info)
+    assert "Calculator" in header
+    assert "require('calc')" in header
+
+
+def test_build_js_import_header_class_deduplication():
+    file_info = {
+        "functions": [],
+        "classes": [
+            {"name": "Calc", "methods": [{"name": "add"}, {"name": "sub"}]},
+        ],
+    }
+    header = _build_js_import_header("calc", file_info)
+    assert header.count("Calc") == 1
+
+
+def test_build_js_import_header_empty():
+    file_info = {"functions": [], "classes": []}
+    header = _build_js_import_header("calc", file_info)
+    assert "require('calc')" in header
+
+
+# ---------------------------------------------------------------------------
+# Tests de generate() con archivos JS (HU-11)
+# ---------------------------------------------------------------------------
+
+VALID_JS_CODE = "test('adds', () => {\n  expect(add(1, 2)).toBe(3);\n});\n"
+INVALID_JS_CODE = "esto no es javascript @@@"
+
+
+def _make_js_ast_result():
+    return {
+        "calc.js": {
+            "functions": [
+                {"name": "add", "params": ["a", "b"], "_lineno": 1, "_end_lineno": 3},
+            ],
+            "classes": [],
+            "imports": [],
+        }
+    }
+
+
+def _make_repo_with_js_calc(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    calc = tmp_path / "calc.js"
+    calc.write_text("function add(a, b) {\n  return a + b;\n}\n")
+    return str(tmp_path)
+
+
+def test_generate_js_creates_test_js_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    repo = _make_repo_with_js_calc(tmp_path / "repo")
+    ast_result = _make_js_ast_result()
+
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = VALID_JS_CODE
+        generate(repo, ast_result)
+
+    assert (tmp_path / "tests_generados" / "unit" / "calc.test.js").exists()
+
+
+def test_generate_js_does_not_create_py_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    repo = _make_repo_with_js_calc(tmp_path / "repo")
+    ast_result = _make_js_ast_result()
+
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = VALID_JS_CODE
+        generate(repo, ast_result)
+
+    assert not (tmp_path / "tests_generados" / "unit" / "test_calc.py").exists()
+
+
+def test_generate_js_does_not_create_conftest(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    repo = _make_repo_with_js_calc(tmp_path / "repo")
+    ast_result = _make_js_ast_result()
+
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = VALID_JS_CODE
+        generate(repo, ast_result)
+
+    assert not (tmp_path / "tests_generados" / "unit" / "conftest.py").exists()
+
+
+def test_generate_js_header_contains_require(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    repo = _make_repo_with_js_calc(tmp_path / "repo")
+    ast_result = _make_js_ast_result()
+
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = VALID_JS_CODE
+        generate(repo, ast_result)
+
+    content = (tmp_path / "tests_generados" / "unit" / "calc.test.js").read_text()
+    assert "require('calc')" in content
+
+
+def test_generate_js_creates_jest_config(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    repo = _make_repo_with_js_calc(tmp_path / "repo")
+    ast_result = _make_js_ast_result()
+
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = VALID_JS_CODE
+        generate(repo, ast_result)
+
+    jest_config = tmp_path / "tests_generados" / "unit" / "jest.config.js"
+    assert jest_config.exists()
+    content = jest_config.read_text()
+    assert "rootDir: '.'" in content
+    assert "modulePaths" in content
+
+
+def test_generate_block_js_valid_output():
+    source_lines = ["function add(a, b) {", "  return a + b;", "}"]
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        client = MockClient.return_value
+        client.generate.return_value = VALID_JS_CODE
+        result = _generate_block(
+            client, source_lines, _make_unit("add"), "calc", None, language="javascript"
+        )
+    assert not result.startswith("# ERROR")
+
+
+def test_generate_block_js_invalid_output_falls_back_to_error():
+    source_lines = ["function add(a, b) { return a + b; }"]
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        client = MockClient.return_value
+        client.generate.return_value = INVALID_JS_CODE
+        result = _generate_block(
+            client, source_lines, _make_unit("add"), "calc", None, language="javascript"
+        )
+    assert result.startswith("# ERROR: no se pudo generar tests para")

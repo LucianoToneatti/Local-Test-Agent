@@ -58,6 +58,38 @@ def test_explore_only_py_files(tmp_path):
     assert len(result) == 1
 
 
+def test_explore_finds_js_files(tmp_path):
+    (tmp_path / "module.py").write_text("pass")
+    (tmp_path / "app.js").write_text("function add(a, b) { return a + b; }")
+    result = explore(str(tmp_path))
+    assert "app.js" in result
+    assert "module.py" in result
+
+
+def test_explore_finds_ts_files(tmp_path):
+    (tmp_path / "utils.ts").write_text("export function greet(name: string) { return name; }")
+    result = explore(str(tmp_path))
+    assert "utils.ts" in result
+
+
+def test_explore_ignores_non_supported_extensions(tmp_path):
+    (tmp_path / "script.py").write_text("pass")
+    (tmp_path / "index.html").write_text("<html></html>")
+    (tmp_path / "style.css").write_text("body {}")
+    (tmp_path / "data.json").write_text("{}")
+    result = explore(str(tmp_path))
+    assert all(p.endswith((".py", ".js", ".ts")) for p in result)
+    assert len(result) == 1  # solo script.py
+
+
+def test_explore_js_result_is_sorted(tmp_path):
+    (tmp_path / "z.js").write_text("")
+    (tmp_path / "a.js").write_text("")
+    (tmp_path / "m.py").write_text("")
+    result = explore(str(tmp_path))
+    assert result == sorted(result)
+
+
 def test_explore_empty_repo(tmp_path):
     result = explore(str(tmp_path))
     assert result == []

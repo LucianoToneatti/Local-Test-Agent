@@ -1,9 +1,11 @@
 """
-Generador de tests unitarios para repositorios Python.
+Generador de tests unitarios para repositorios Python y JavaScript/TypeScript.
 
-Recibe el dict producido por ast_extractor.extract() y genera archivos pytest
-en tests_generados/unit/. Llama al LLM una vez por función/método, valida el
-output con ast.parse() y reintenta una vez si el código generado no es válido.
+Para Python genera archivos pytest en tests_generados/unit/test_<stem>.py.
+Para JS/TS genera archivos Jest en tests_generados/unit/<stem>.test.js.
+
+Llama al LLM una vez por función/método, valida el output y reintenta
+una vez si el código generado no es válido.
 """
 
 import ast
@@ -14,6 +16,12 @@ from agent.llm_client import LLMClient
 from prompts.prompt_builder import PromptBuilder, clean_response
 
 OUTPUT_DIR = Path("tests_generados/unit")
+
+_JS_EXTENSIONS = {'.js', '.ts'}
+
+
+def _detect_language(rel_path: str) -> str:
+    return "javascript" if Path(rel_path).suffix in _JS_EXTENSIONS else "python"
 
 
 def generate(repo_path: str, ast_result: dict) -> None:
@@ -28,20 +36,35 @@ def generate(repo_path: str, ast_result: dict) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     client = LLMClient()
     repo = Path(repo_path).expanduser().resolve()
+    has_python = False
+    has_js = False
 
     for rel_path, file_info in ast_result.items():
-        blocks = _generate_blocks_for_file(client, repo, rel_path, file_info)
+        language = _detect_language(rel_path)
+        if language == "python":
+            has_python = True
+        else:
+            has_js = True
+
+        blocks = _generate_blocks_for_file(client, repo, rel_path, file_info, language)
         if blocks:
             module_name = Path(rel_path).stem
-            header = _build_import_header(module_name, file_info)
-            out_file = OUTPUT_DIR / f"test_{module_name}.py"
+            if language == "javascript":
+                header = _build_js_import_header(module_name, file_info)
+                out_file = OUTPUT_DIR / f"{module_name}.test.js"
+            else:
+                header = _build_import_header(module_name, file_info)
+                out_file = OUTPUT_DIR / f"test_{module_name}.py"
             out_file.write_text(header + "\n\n" + "\n\n".join(blocks) + "\n")
 
-    _write_conftest(repo)
+    if has_python:
+        _write_conftest(repo)
+    if has_js:
+        _write_jest_config(repo)
 
 
 def _build_import_header(module_name: str, file_info: dict) -> str:
-    """Construye el bloque de imports del archivo de tests: pytest + símbolos del módulo."""
+    """Construye el bloque de imports del archivo de tests Python: pytest + símbolos del módulo."""
     lines = ["import pytest"]
     for func in file_info.get("functions", []):
         lines.append(f"from {module_name} import {func['name']}")
@@ -53,11 +76,52 @@ def _build_import_header(module_name: str, file_info: dict) -> str:
     return "\n".join(lines)
 
 
+def _build_js_import_header(module_name: str, file_info: dict) -> str:
+    """
+    Construye el require CommonJS para el archivo de tests Jest.
+
+    Usa nombre bare (sin './') para que Jest lo resuelva vía modulePaths
+    configurado en jest.config.js — análogo a sys.path en conftest.py.
+    """
+    symbols: list[str] = []
+    for func in file_info.get("functions", []):
+        symbols.append(func["name"])
+    seen: set[str] = set()
+    for cls in file_info.get("classes", []):
+        if cls["name"] not in seen:
+            symbols.append(cls["name"])
+            seen.add(cls["name"])
+    if symbols:
+        destructured = ", ".join(symbols)
+        return f"const {{ {destructured} }} = require('{module_name}');"
+    return f"const mod = require('{module_name}');"
+
+
+def _write_jest_config(repo: Path) -> None:
+    """
+    Escribe jest.config.js en el directorio de tests generados.
+
+    rootDir: '.' restringe a Jest a escanear solo ese directorio (evita que
+    suba al home buscando package.json y encuentre archivos malformados).
+    modulePaths: [repo] permite require('modulo') sin './' — equivalente al
+    sys.path.insert de conftest.py para Python.
+    """
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    config = (
+        "module.exports = {\n"
+        "  rootDir: '.',\n"
+        f"  modulePaths: ['{repo}'],\n"
+        "};\n"
+    )
+    (OUTPUT_DIR / "jest.config.js").write_text(config)
+
+
 def _generate_blocks_for_file(
     client: LLMClient,
     repo: Path,
     rel_path: str,
     file_info: dict,
+    language: str = "python",
 ) -> list[str]:
     """Genera todos los bloques de tests para un archivo fuente."""
     source_lines = _read_source_lines(repo, rel_path)
@@ -74,6 +138,7 @@ def _generate_blocks_for_file(
             unit=func,
             module_name=module_name,
             class_name=None,
+            language=language,
         )
         blocks.append(block)
 
@@ -85,6 +150,7 @@ def _generate_blocks_for_file(
                 unit=method,
                 module_name=module_name,
                 class_name=cls["name"],
+                language=language,
             )
             blocks.append(block)
 
@@ -97,10 +163,11 @@ def _generate_block(
     unit: dict,
     module_name: str,
     class_name: Optional[str],
+    language: str = "python",
 ) -> str:
     """
     Genera un bloque de tests para una función o método.
-    Reintenta una vez si el output del LLM no es Python válido.
+    Reintenta una vez si el output del LLM no es válido.
     """
     func_source = _slice_source(source_lines, unit)
     func_name = unit["name"]
@@ -108,18 +175,26 @@ def _generate_block(
     for attempt in range(2):
         prompt = PromptBuilder.build(
             code=func_source,
+            language=language,
             function_name=func_name,
             module_name=module_name,
             class_name=class_name,
         )
         raw = client.generate(prompt.user, system=prompt.system)
-        code = clean_response(raw, strip_imports=True)
-        try:
-            ast.parse(code)
-            return code
-        except SyntaxError:
-            if attempt == 0:
-                continue  # reintenta
+        code = clean_response(raw, strip_imports=True, language=language)
+
+        if language == "javascript":
+            if "test(" in code or "describe(" in code or "it(" in code:
+                return code
+        else:
+            try:
+                ast.parse(code)
+                return code
+            except SyntaxError:
+                pass
+
+        if attempt == 0:
+            continue
 
     label = f"{class_name}.{func_name}" if class_name else func_name
     return f"# ERROR: no se pudo generar tests para {label}"

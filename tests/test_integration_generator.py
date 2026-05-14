@@ -280,3 +280,34 @@ def test_generate_calls_llm_once_per_pair(tmp_path):
         MockClient.return_value.generate.return_value = VALID_CODE
         generate(str(repo), ast_result)
     assert MockClient.return_value.generate.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Tests de _find_pairs con archivos JS (HU-11 fix)
+# ---------------------------------------------------------------------------
+
+def test_find_pairs_skips_js_files():
+    ast_result = _make_ast_result({
+        "app.js": {"imports": ["utils.js"]},
+        "utils.js": {"imports": []},
+    })
+    assert _find_pairs(ast_result) == []
+
+
+def test_find_pairs_skips_js_importer_of_py():
+    ast_result = _make_ast_result({
+        "app.js": {"imports": ["utils.py"]},
+        "utils.py": {"imports": []},
+    })
+    assert _find_pairs(ast_result) == []
+
+
+def test_find_pairs_only_py_pairs_in_mixed_repo():
+    ast_result = _make_ast_result({
+        "a.py": {"imports": ["b.py"]},
+        "b.py": {"imports": []},
+        "app.js": {"imports": ["utils.js"]},
+        "utils.js": {"imports": []},
+    })
+    pairs = _find_pairs(ast_result)
+    assert pairs == [("a.py", "b.py")]

@@ -1,20 +1,71 @@
 """
-Extractor AST para repositorios Python.
+Extractor AST/regex para repositorios Python y JavaScript/TypeScript.
 
-Analiza archivos .py con el módulo ast de stdlib y devuelve un dict unificado
-con funciones top-level, clases (con sus métodos) e imports del mismo repo.
+Para .py usa el módulo ast de stdlib. Para .js/.ts usa regex dado que
+no existe un parser de JS en la stdlib de Python.
+
+Devuelve en ambos casos un dict unificado con funciones top-level,
+clases (con sus métodos) e imports del mismo repo.
 """
 
 import ast
+import re
 import os
 from pathlib import Path
 
 FRAGMENT_THRESHOLD = 200  # líneas máximas por fragmento
 
+_JS_EXTENSIONS = {'.js', '.ts', '.mjs'}
+
+# ---------------------------------------------------------------------------
+# Patrones regex para JS/TS
+# ---------------------------------------------------------------------------
+
+_JS_FUNC_DECL = re.compile(
+    r'^[ \t]*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*'
+    r'([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(([^)]*)\)',
+    re.MULTILINE,
+)
+
+# const/let/var name = [async] (params) =>  o  name = param =>
+_JS_ARROW = re.compile(
+    r'^[ \t]*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*'
+    r'=\s*(?:async\s+)?(?:\(([^)]*)\)|([a-zA-Z_$][a-zA-Z0-9_$]*))\s*=>',
+    re.MULTILINE,
+)
+
+# const/let/var name = [async] function [name](
+_JS_FUNC_EXPR = re.compile(
+    r'^[ \t]*(?:export\s+)?(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*'
+    r'=\s*(?:async\s+)?function\s*\*?\s*(?:[a-zA-Z_$][a-zA-Z0-9_$]*)?\s*\(',
+    re.MULTILINE,
+)
+
+_JS_CLASS_DECL = re.compile(
+    r'^[ \t]*(?:export\s+(?:default\s+)?)?class\s+([a-zA-Z_$][a-zA-Z0-9_$]*)',
+    re.MULTILINE,
+)
+
+# Métodos de clase: línea con indentación + [modificadores] + nombre(params)
+_JS_METHOD = re.compile(
+    r'^([ \t]+)'
+    r'(?:(?:static|async|get|set|override|abstract|public|private|protected|readonly)\s+)*'
+    r'([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(([^)]*)\)',
+    re.MULTILINE,
+)
+
+_JS_IMPORT_PAT = re.compile(r"""(?:from|require)\s*\(?\s*['"](\.[^'"]+)['"]""")
+
+_JS_CONTROL_KEYWORDS = {
+    'if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new',
+    'typeof', 'instanceof', 'await', 'yield', 'delete', 'void', 'super',
+    'class', 'import', 'export', 'from', 'const', 'let', 'var', 'function',
+}
+
 
 def extract(files: list[str], repo_path: str) -> dict:
     """
-    Extrae funciones, clases e imports de una lista de archivos .py.
+    Extrae funciones, clases e imports de una lista de archivos .py/.js/.ts.
 
     Args:
         files: Lista de rutas relativas al repo_path (output de explore()).
@@ -28,7 +79,10 @@ def extract(files: list[str], repo_path: str) -> dict:
     result = {}
     for rel_path in files:
         abs_path = root / rel_path
-        result[rel_path] = _parse_file(abs_path, repo_files_set, root)
+        if Path(rel_path).suffix in _JS_EXTENSIONS:
+            result[rel_path] = _parse_js_file(abs_path, repo_files_set, root)
+        else:
+            result[rel_path] = _parse_python_file(abs_path, repo_files_set, root)
     return result
 
 
@@ -94,7 +148,7 @@ def fragment(file_info: dict, source_lines: list[str]) -> list[dict]:
     return fragments if fragments else [{'functions': [], 'classes': []}]
 
 
-def _parse_file(abs_path: Path, repo_files_set: set, root: Path) -> dict:
+def _parse_python_file(abs_path: Path, repo_files_set: set, root: Path) -> dict:
     try:
         source = abs_path.read_text(encoding='utf-8')
     except OSError as e:
@@ -109,6 +163,178 @@ def _parse_file(abs_path: Path, repo_files_set: set, root: Path) -> dict:
     imports = _extract_repo_imports(tree, repo_files_set, root)
     functions = _extract_functions(tree, source_lines)
     classes = _extract_classes(tree, source_lines)
+
+    return {'functions': functions, 'classes': classes, 'imports': imports}
+
+
+# ---------------------------------------------------------------------------
+# Parser JS/TS (regex-based)
+# ---------------------------------------------------------------------------
+
+def _lineno_of(source: str, pos: int) -> int:
+    return source.count('\n', 0, pos) + 1
+
+
+def _find_js_end_lineno(lines: list[str], start_lineno: int) -> int:
+    """Cuenta llaves para encontrar la línea de cierre de un bloque JS. 1-indexed."""
+    depth = 0
+    found_opening = False
+    for i, line in enumerate(lines[start_lineno - 1:], start=start_lineno):
+        depth += line.count('{') - line.count('}')
+        if '{' in line:
+            found_opening = True
+        if found_opening and depth <= 0:
+            return i
+    return start_lineno  # arrow de una línea sin {}
+
+
+def _parse_js_params(params_str: str) -> list[str]:
+    if not params_str.strip():
+        return []
+    params = []
+    for p in params_str.split(','):
+        # Eliminar type annotations TS, valores default y destructuring
+        name = p.strip().split(':')[0].split('=')[0].strip().lstrip('.')
+        name = name.lstrip('{').lstrip('[')
+        if name and re.match(r'^[a-zA-Z_$]', name):
+            params.append(name)
+    return params
+
+
+def _extract_js_functions(source: str, lines: list[str], class_ranges: list[tuple]) -> list[dict]:
+    """Extrae funciones top-level (excluye las que caen dentro de class bodies)."""
+    result = []
+    seen: set[int] = set()
+
+    def in_class(lineno: int) -> bool:
+        return any(s <= lineno <= e for s, e in class_ranges)
+
+    for pattern in (_JS_FUNC_DECL, _JS_ARROW, _JS_FUNC_EXPR):
+        for match in pattern.finditer(source):
+            name = match.group(1)
+            lineno = _lineno_of(source, match.start())
+            if lineno in seen or in_class(lineno):
+                continue
+            seen.add(lineno)
+            end_lineno = _find_js_end_lineno(lines, lineno)
+
+            if pattern is _JS_FUNC_DECL:
+                params_str = match.group(2) if match.lastindex >= 2 else ''
+            elif pattern is _JS_ARROW:
+                # grupo 2 = params entre paréntesis, grupo 3 = param sin paréntesis
+                params_str = (match.group(2) or match.group(3)) if match.lastindex >= 2 else ''
+            else:
+                params_str = ''
+
+            result.append({
+                'name': name,
+                'type': 'function',
+                'params': _parse_js_params(params_str or ''),
+                'docstring': '',
+                '_lineno': lineno,
+                '_end_lineno': end_lineno,
+            })
+
+    result.sort(key=lambda f: f['_lineno'])
+    return result
+
+
+def _extract_js_methods(class_source: str, class_lines: list[str], class_start: int) -> list[dict]:
+    """Extrae métodos de un bloque de clase JS/TS."""
+    methods = []
+    seen: set[int] = set()
+
+    for match in _JS_METHOD.finditer(class_source):
+        name = match.group(2)
+        if name in _JS_CONTROL_KEYWORDS:
+            continue
+
+        local_lineno = class_source.count('\n', 0, match.start()) + 1
+        if local_lineno in seen:
+            continue
+
+        # Verificar que sea una definición (línea termina con { o siguiente con {)
+        match_line = class_lines[local_lineno - 1] if local_lineno <= len(class_lines) else ''
+        next_line = class_lines[local_lineno] if local_lineno < len(class_lines) else ''
+        if '{' not in match_line and not next_line.strip().startswith('{'):
+            continue
+
+        seen.add(local_lineno)
+        abs_lineno = class_start + local_lineno - 1
+        end_lineno = _find_js_end_lineno(class_lines, local_lineno)
+        abs_end_lineno = class_start + end_lineno - 1
+
+        methods.append({
+            'name': name,
+            'type': 'function',
+            'params': _parse_js_params(match.group(3)),
+            'docstring': '',
+            '_lineno': abs_lineno,
+            '_end_lineno': abs_end_lineno,
+        })
+
+    return methods
+
+
+def _extract_js_classes(source: str, lines: list[str]) -> list[dict]:
+    result = []
+    for match in _JS_CLASS_DECL.finditer(source):
+        name = match.group(1)
+        start_lineno = _lineno_of(source, match.start())
+        end_lineno = _find_js_end_lineno(lines, start_lineno)
+        class_lines = lines[start_lineno - 1:end_lineno]
+        class_source = '\n'.join(class_lines)
+        methods = _extract_js_methods(class_source, class_lines, start_lineno)
+        result.append({
+            'name': name,
+            'type': 'class',
+            'docstring': '',
+            'methods': methods,
+            '_lineno': start_lineno,
+            '_end_lineno': end_lineno,
+        })
+    return result
+
+
+def _extract_js_imports(source: str, abs_path: Path, repo_files_set: set, root: Path) -> list[str]:
+    """Detecta imports relativos (./path) que apunten a archivos del mismo repo."""
+    result = []
+    current_dir = abs_path.parent
+
+    for m in _JS_IMPORT_PAT.finditer(source):
+        raw = m.group(1)
+        resolved = (current_dir / raw).resolve()
+
+        # Probar con la extensión que ya tiene, y también agregar .js / .ts
+        candidates = [resolved]
+        if resolved.suffix not in ('.js', '.ts', '.mjs'):
+            for ext in ('.js', '.ts'):
+                candidates.append(Path(str(resolved) + ext))
+                candidates.append(resolved.with_suffix(ext))
+
+        for candidate in candidates:
+            try:
+                rel = str(candidate.relative_to(root))
+                if rel in repo_files_set and rel not in result:
+                    result.append(rel)
+                    break
+            except ValueError:
+                pass
+
+    return result
+
+
+def _parse_js_file(abs_path: Path, repo_files_set: set, root: Path) -> dict:
+    try:
+        source = abs_path.read_text(encoding='utf-8')
+    except OSError as e:
+        return {'functions': [], 'classes': [], 'imports': [], 'parse_error': str(e)}
+
+    lines = source.splitlines()
+    classes = _extract_js_classes(source, lines)
+    class_ranges = [(cls['_lineno'], cls['_end_lineno']) for cls in classes]
+    functions = _extract_js_functions(source, lines, class_ranges)
+    imports = _extract_js_imports(source, abs_path, repo_files_set, root)
 
     return {'functions': functions, 'classes': classes, 'imports': imports}
 

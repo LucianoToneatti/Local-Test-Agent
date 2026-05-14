@@ -45,13 +45,18 @@ def _find_pairs(ast_result: dict) -> list[tuple[str, str]]:
     """
     Retorna la lista de pares (importer_path, imported_path) detectados por imports.
 
-    Un par (A, B) se incluye cuando el campo `imports` de A contiene la ruta relativa de B
-    y B está también presente como key en ast_result.
+    Solo considera archivos .py: IntegrationPromptTemplate genera Python y usa
+    ast.parse() para validar, por lo que no aplica a JS/TS.
+
+    Un par (A, B) se incluye cuando el campo `imports` de A contiene la ruta
+    relativa de B y B está también presente como key en ast_result.
     """
     pairs = []
     for rel_path, file_info in ast_result.items():
+        if not rel_path.endswith(".py"):
+            continue
         for imported in file_info.get("imports", []):
-            if imported in ast_result:
+            if imported in ast_result and imported.endswith(".py"):
                 pairs.append((rel_path, imported))
     return pairs
 
