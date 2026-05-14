@@ -1,9 +1,11 @@
 """
-Generador de tests de integración para repositorios Python.
+Generador de tests de integración para repositorios Python y JavaScript/TypeScript.
 
 Recibe el dict producido por ast_extractor.extract(), detecta pares de módulos
-relacionados por imports, llama al LLM una vez por par, valida el output con
-ast.parse() y reintenta una vez si el código generado no es válido.
+relacionados por imports, llama al LLM una vez por par y escribe los tests.
+
+Python: valida con ast.parse() y reintenta una vez si el código no es válido.
+JS/TS: valida presencia de bloques test/describe y reintenta una vez si no los hay.
 """
 
 import ast
@@ -11,10 +13,16 @@ from pathlib import Path
 from typing import Optional
 
 from agent.llm_client import LLMClient
-from prompts.prompt_builder import IntegrationPromptTemplate, clean_response
+from prompts.prompt_builder import (
+    IntegrationPromptTemplate,
+    JsIntegrationPromptTemplate,
+    clean_response,
+)
 
 OUTPUT_DIR = Path("tests_generados/integration")
 _TEMPLATE = IntegrationPromptTemplate()
+_JS_TEMPLATE = JsIntegrationPromptTemplate()
+_JS_EXTENSIONS = {".js", ".ts", ".mjs"}
 
 
 def generate(repo_path: str, ast_result: dict) -> None:
@@ -37,8 +45,34 @@ def generate(repo_path: str, ast_result: dict) -> None:
         stem_b = Path(b_path).stem
         out_file = OUTPUT_DIR / f"test_{stem_a}_{stem_b}.py"
         out_file.write_text(code + "\n")
-
     _write_conftest(repo)
+
+    js_pairs = _find_js_pairs(ast_result)
+    for (a_path, b_path) in js_pairs:
+        code = _generate_js_pair_test(client, repo, a_path, b_path, ast_result)
+        stem_a = Path(a_path).stem
+        stem_b = Path(b_path).stem
+        out_file = OUTPUT_DIR / f"{stem_a}_{stem_b}.test.js"
+        out_file.write_text(code + "\n")
+    if js_pairs:
+        _write_js_jest_config(repo)
+
+
+def _find_js_pairs(ast_result: dict) -> list[tuple[str, str]]:
+    """
+    Retorna la lista de pares (importer_path, imported_path) para archivos JS/TS.
+
+    Un par (A, B) se incluye cuando el campo `imports` de A contiene la ruta
+    relativa de B y B está también presente como key en ast_result.
+    """
+    pairs = []
+    for rel_path, file_info in ast_result.items():
+        if Path(rel_path).suffix not in _JS_EXTENSIONS:
+            continue
+        for imported in file_info.get("imports", []):
+            if imported in ast_result and Path(imported).suffix in _JS_EXTENSIONS:
+                pairs.append((rel_path, imported))
+    return pairs
 
 
 def _find_pairs(ast_result: dict) -> list[tuple[str, str]]:
@@ -120,6 +154,70 @@ def _read_source(repo: Path, rel_path: str) -> Optional[str]:
         return (repo / rel_path).read_text(encoding="utf-8")
     except OSError:
         return None
+
+
+def _format_js_signatures(file_info: dict) -> str:
+    lines = []
+    for func in file_info.get("functions", []):
+        params = ", ".join(func.get("params", []))
+        lines.append(f"function {func['name']}({params}) {{ ... }}")
+    return "\n".join(lines)
+
+
+def _build_js_require_header(stem_a: str, file_info_a: dict) -> str:
+    symbols = [f["name"] for f in file_info_a.get("functions", [])]
+    if symbols:
+        destructured = ", ".join(symbols)
+        return f"const {{ {destructured} }} = require('{stem_a}');"
+    return f"const mod = require('{stem_a}');"
+
+
+def _generate_js_pair_test(
+    client: LLMClient,
+    repo: Path,
+    a_path: str,
+    b_path: str,
+    ast_result: dict,
+) -> str:
+    """
+    Genera el código de tests de integración Jest para el par (a_path importa b_path).
+    Reintenta una vez si el output del LLM no contiene bloques test/describe.
+    """
+    a_source = _read_source(repo, a_path)
+    if a_source is None:
+        return f"// ERROR: no se pudo leer {a_path}"
+
+    b_sigs = _format_js_signatures(ast_result.get(b_path, {}))
+    stem_a = Path(a_path).stem
+    stem_b = Path(b_path).stem
+    header = _build_js_require_header(stem_a, ast_result.get(a_path, {}))
+
+    for attempt in range(2):
+        prompt = _JS_TEMPLATE.build(
+            code=a_source,
+            module_name=stem_a,
+            class_name=stem_b,
+            module_b_sigs=b_sigs,
+        )
+        raw = client.generate(prompt.user, system=prompt.system)
+        code = clean_response(raw, strip_imports=True, language="javascript")
+        if "test(" in code or "describe(" in code or "it(" in code:
+            return header + "\n\n" + code
+        if attempt == 0:
+            continue
+
+    return f"// ERROR: no se pudo generar test de integración para {stem_a}_{stem_b}"
+
+
+def _write_js_jest_config(repo: Path) -> None:
+    """Escribe jest.config.js en el directorio de integración con modulePaths al repo."""
+    config = (
+        "module.exports = {\n"
+        "  rootDir: '.',\n"
+        f"  modulePaths: ['{repo}'],\n"
+        "};\n"
+    )
+    (OUTPUT_DIR / "jest.config.js").write_text(config)
 
 
 def _write_conftest(repo: Path) -> None:

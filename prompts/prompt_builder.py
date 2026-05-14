@@ -250,6 +250,67 @@ class IntegrationPromptTemplate(PromptTemplate):
         return BuiltPrompt(system=self._SYSTEM, user=user)
 
 
+class JsIntegrationPromptTemplate(PromptTemplate):
+    """
+    Template para generar tests de integración entre pares de módulos JavaScript/TypeScript.
+
+    Se llama una vez por par (A importa B). Pasa al LLM:
+    (1) código fuente completo de A, (2) firmas de funciones de B, (3) nombres de módulos.
+    El generador agrega el header require() — el LLM solo genera bloques test/describe.
+    """
+
+    language = "javascript_integration"
+
+    _SYSTEM = (
+        "You are a JavaScript integration test-writing machine. "
+        "You output ONLY raw JavaScript code. Nothing else.\n"
+        "ABSOLUTE RULES — never break these:\n"
+        "- NO markdown. Never use triple backticks (```) under any circumstances.\n"
+        "- NO explanations, NO introductory sentences, NO comments outside the code.\n"
+        "- Your entire response must be valid JavaScript that can be saved to a .test.js file.\n"
+        "- Do NOT include any require() or import statements. Output ONLY test blocks.\n"
+        "- Do NOT include any comments (no // lines).\n"
+        "- Use Jest. ONLY test functions from module A that internally call module B.\n"
+        "- NEVER test functions from module B in isolation.\n"
+        "- No mocks. Tests must exercise the real interaction between A and B.\n"
+        "- Assert with concrete expected values (e.g., expect(promedio([1,2,3])).toBe(2)).\n"
+        "- Use describe()/test() blocks."
+    )
+
+    _USER_TEMPLATE = (
+        "Write Jest integration tests for module A, which depends on module B.\n\n"
+        "# Module A (the module under test): {module_a_name}.js\n"
+        "{module_a_source}\n\n"
+        "# Module B function signatures (used internally by A): {module_b_name}.js\n"
+        "{module_b_sigs}\n\n"
+        "STRICT RULES:\n"
+        "1. Test ONLY functions from {module_a_name}. "
+        "They are already available via require (DO NOT add require yourself).\n"
+        "2. DO NOT write tests for functions from {module_b_name} in isolation.\n"
+        "3. No mocks — let A call B for real.\n"
+        "4. Assert with concrete expected values.\n\n"
+        "OUTPUT RULES: raw JavaScript code only. "
+        "No markdown, no backticks, no explanations, no require/import statements. "
+        "Start your response directly with 'describe(' or 'test('."
+    )
+
+    def build(
+        self,
+        code: str,
+        function_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+        class_name: Optional[str] = None,
+        module_b_sigs: str = "",
+    ) -> BuiltPrompt:
+        user = self._USER_TEMPLATE.format(
+            module_a_name=module_name or "module_a",
+            module_a_source=code.strip(),
+            module_b_name=class_name or "module_b",
+            module_b_sigs=module_b_sigs or "(no signatures available)",
+        )
+        return BuiltPrompt(system=self._SYSTEM, user=user)
+
+
 class CorrectionPromptTemplate(PromptTemplate):
     """
     Template para corregir una función de test pytest que falló.
@@ -307,6 +368,7 @@ _REGISTRY: dict[str, PromptTemplate] = {
     "python": PythonPromptTemplate(),
     "javascript": JsPromptTemplate(),
     "python_integration": IntegrationPromptTemplate(),
+    "javascript_integration": JsIntegrationPromptTemplate(),
     "python_correction": CorrectionPromptTemplate(),
 }
 
