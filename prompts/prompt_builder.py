@@ -110,6 +110,82 @@ class PythonPromptTemplate(PromptTemplate):
         return BuiltPrompt(system=self._SYSTEM, user=user)
 
 
+class JsPromptTemplate(PromptTemplate):
+    """
+    Template para generar tests Jest a partir de código JavaScript/TypeScript.
+
+    Instrucciones clave del system prompt:
+    - Rol exclusivo: escritor de tests Jest, no explicador de código.
+    - Formato de salida: solo código JavaScript válido, sin bloques markdown,
+      sin comentarios explicativos, sin texto adicional.
+    - Framework obligatorio: Jest.
+    - Cobertura mínima: caso feliz, casos borde y caso de error esperado.
+    - Imports: CommonJS require() — el agente los provee en el header.
+    """
+
+    language = "javascript"
+
+    _SYSTEM = (
+        "You are a JavaScript test-writing machine. "
+        "You output ONLY raw JavaScript code. Nothing else.\n"
+        "ABSOLUTE RULES — never break these:\n"
+        "- NO markdown. Never use triple backticks (```) under any circumstances.\n"
+        "- NO explanations, NO introductory sentences, NO comments outside the code.\n"
+        "- Your entire response must be valid JavaScript that can be saved directly to a .test.js file.\n"
+        "- Do NOT include any require() or import statements. Output ONLY test blocks.\n"
+        "- Do NOT include any comments (no // lines).\n"
+        "- Use Jest. Cover: happy path, edge case, and expected exception.\n"
+        "- Use test() or describe()/it() blocks.\n"
+        "- Name tests descriptively."
+    )
+
+    _USER_TEMPLATE = (
+        "Write Jest tests for this JavaScript function:\n\n"
+        "{code}\n\n"
+        "Function under test: {function_name}\n"
+        "Available as: const {{ {function_name} }} = require('./{module_name}') "
+        "(do NOT include this require in your output).\n\n"
+        "OUTPUT RULES: raw JavaScript code only. "
+        "No markdown, no backticks, no explanations, no require/import statements. "
+        "Start your response directly with 'test(' or 'describe('."
+    )
+
+    _USER_TEMPLATE_METHOD = (
+        "Write Jest tests for this JavaScript method:\n\n"
+        "{code}\n\n"
+        "Method under test: {function_name} (method of class {class_name})\n"
+        "Available as: const {{ {class_name} }} = require('./{module_name}') "
+        "(do NOT include this require in your output).\n"
+        "Instantiate the class before calling the method.\n\n"
+        "OUTPUT RULES: raw JavaScript code only. "
+        "No markdown, no backticks, no explanations, no require/import statements. "
+        "Start your response directly with 'test(' or 'describe('."
+    )
+
+    def build(
+        self,
+        code: str,
+        function_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+        class_name: Optional[str] = None,
+    ) -> BuiltPrompt:
+        resolved_name = function_name or "la_funcion"
+        if class_name:
+            user = self._USER_TEMPLATE_METHOD.format(
+                code=code.strip(),
+                function_name=resolved_name,
+                module_name=module_name or "module",
+                class_name=class_name,
+            )
+        else:
+            user = self._USER_TEMPLATE.format(
+                code=code.strip(),
+                function_name=resolved_name,
+                module_name=module_name or "module",
+            )
+        return BuiltPrompt(system=self._SYSTEM, user=user)
+
+
 class IntegrationPromptTemplate(PromptTemplate):
     """
     Template para generar tests de integración entre pares de módulos Python.
@@ -229,6 +305,7 @@ class CorrectionPromptTemplate(PromptTemplate):
 # 2. Registrarla aquí.
 _REGISTRY: dict[str, PromptTemplate] = {
     "python": PythonPromptTemplate(),
+    "javascript": JsPromptTemplate(),
     "python_integration": IntegrationPromptTemplate(),
     "python_correction": CorrectionPromptTemplate(),
 }
@@ -258,25 +335,31 @@ class PromptBuilder:
         return list(_REGISTRY.keys())
 
 
-def clean_response(response: str, *, strip_imports: bool = False) -> str:
+def clean_response(response: str, *, strip_imports: bool = False, language: str = "python") -> str:
     """
     Limpia el output del LLM eliminando bloques markdown y texto explicativo.
 
     Estrategia:
     1. Si hay bloques ```...```, extrae solo su contenido (el modelo los incluyó igual).
     2. Si no hay bloques pero hay texto previo al código, descarta todo lo anterior
-       a la primera línea que empiece con 'import', 'from' o 'def test_'.
+       a la primera línea que empiece con el patrón de inicio para el lenguaje dado.
     3. En cualquier caso, elimina backticks sueltos residuales.
-    4. Si strip_imports=True, elimina todas las líneas que empiecen con 'import' o 'from'
-       (para tests unitarios, donde el agente ya provee el header de imports correcto).
+    4. Si strip_imports=True, elimina líneas de import según el lenguaje.
     """
     # Paso 1: extraer contenido de bloques markdown si existen
-    blocks = re.findall(r"```(?:python)?\n?(.*?)```", response, flags=re.DOTALL)
+    blocks = re.findall(
+        r"```(?:python|javascript|js|ts|typescript)?\n?(.*?)```",
+        response,
+        flags=re.DOTALL,
+    )
     if blocks:
         response = "\n\n".join(b.strip() for b in blocks)
 
     # Paso 2: descartar texto explicativo antes del código
-    match = re.search(r"^(import |from |def test_)", response, re.MULTILINE)
+    if language == "javascript":
+        match = re.search(r"^(test\s*\(|describe\s*\(|it\s*\()", response, re.MULTILINE)
+    else:
+        match = re.search(r"^(import |from |def test_)", response, re.MULTILINE)
     if match:
         response = response[match.start():]
 
@@ -285,12 +368,27 @@ def clean_response(response: str, *, strip_imports: bool = False) -> str:
 
     # Paso 4: eliminar líneas de import si el agente provee el header
     if strip_imports:
-        response = "\n".join(
-            line for line in response.splitlines()
-            if not line.lstrip().startswith(("import ", "from "))
-        )
+        if language == "javascript":
+            response = "\n".join(
+                line for line in response.splitlines()
+                if not _is_js_import_line(line)
+            )
+        else:
+            response = "\n".join(
+                line for line in response.splitlines()
+                if not line.lstrip().startswith(("import ", "from "))
+            )
 
     return response.strip()
+
+
+def _is_js_import_line(line: str) -> bool:
+    stripped = line.lstrip()
+    if stripped.startswith("import "):
+        return True
+    if stripped.startswith(("const ", "let ", "var ")) and "require(" in line:
+        return True
+    return False
 
 
 def _extract_function_name(code: str) -> Optional[str]:

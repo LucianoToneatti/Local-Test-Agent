@@ -534,6 +534,37 @@ El autocorrector (`_correct_test`) extraía la función fallida, la enviaba al L
 
 ---
 
+## HU-11 — Soporte JavaScript/TypeScript unitarios
+
+### Qué se implementó
+- `agent/repo_explorer.py`: se extendieron las extensiones detectadas de `.py` a `.py`, `.js` y `.ts`.
+- `agent/ast_extractor.py`: se agregó un parser basado en regex para JS/TS (`_parse_js_file`), dado que no existe un módulo AST de JS en la stdlib de Python. Extrae funciones top-level (declaraciones, arrows, expresiones de función) y clases con sus métodos. El dispatcher en `extract()` elige Python AST o regex JS según la extensión del archivo.
+- `prompts/prompt_builder.py`: se agregó `JsPromptTemplate` para generar tests Jest. Registrada en `_REGISTRY` como `"javascript"`. Se actualizó `clean_response()` con parámetro `language` para manejar los patrones de inicio de código JS (`test(`, `describe(`) y el stripping de imports CommonJS/ES module.
+- `agent/test_generator.py`: se agregó `_detect_language()` por extensión del path, `_build_js_import_header()` que genera un `require` CommonJS, y se extendieron `_generate_block()` y `_generate_blocks_for_file()` con el parámetro `language`. La validación de output usa `ast.parse()` para Python y una heurística de texto para JS (`test(` / `describe(` / `it(`). Los tests JS se guardan como `{stem}.test.js`.
+- `agent/test_runner.py`: se descompuso `run()` en `_run_pytest()` (lógica preexistente) y `_run_jest()` (nuevo). Jest se ejecuta con `npx jest --json --no-coverage` solo si existen archivos `*.test.js` o `*.test.ts` en el directorio. Los resultados de ambos runners se combinan en el mismo formato `{test_id: {status, traceback}}`.
+
+### Decisión de diseño — prerequisitos del entorno JS
+El agente asume que si el usuario trabaja con JavaScript, **ya tiene Node.js y Jest instalados**. El público objetivo son programadores que desarrollan en JS, y estas herramientas son parte de su entorno habitual, de la misma manera que Python y pytest son prerequisitos para usar el agente con código Python. No tiene sentido que el agente instale automáticamente herramientas del entorno del desarrollador: haría el agente frágil ante cambios de versión, generaría efectos secundarios en el entorno del usuario, y añadiría complejidad sin valor real. El agente verifica que Node.js esté disponible (`shutil.which("node")`) y muestra un mensaje claro si falta, dejando la responsabilidad de instalación en el desarrollador.
+
+### Por qué regex en lugar de un parser JS
+El módulo `ast` de Python solo entiende Python. Las alternativas evaluadas para JS:
+- `esprima`/`pyjsparser`: parser completo pero dependencia externa.
+- `tree-sitter`: muy robusto pero requiere compilación de código nativo.
+- **Regex propio**: sin dependencias, suficiente para cubrir los patrones de función y clase más comunes en código real.
+
+La limitación del enfoque regex es que no maneja correctamente código con braces en strings/template literals desbalanceadas, o patrones muy atípicos. Para v1, con el objetivo de detectar funciones y clases para generación de tests, el regex cubre el 95% de los casos prácticos.
+
+### Formato de imports en tests JS generados
+Se eligió **CommonJS (`require()`)** en lugar de ES Modules (`import`). Razón: Jest, por defecto, procesa módulos en modo CommonJS. ES Modules requieren configuración adicional en Jest (`"type": "module"` en package.json o babel/jest transform). CommonJS funciona sin configuración adicional, lo que hace los tests generados portables a cualquier proyecto JS sin requerir setup previo.
+
+### Conceptos teóricos aplicados
+- **Regex como parser aproximado**: viable cuando el lenguaje destino no tiene parser en la stdlib del lenguaje host, y cuando la cobertura del 95% de los casos comunes es suficiente.
+- **Brace counting para encontrar fin de bloque JS**: alternativa a parseo completo para determinar el scope de funciones/clases. Falla con braces en strings no balanceadas, aceptable para código bien formateado.
+- **Extensión del patrón Strategy (PromptTemplate)**: agregar un lenguaje nuevo solo requiere crear una subclase y registrarla en `_REGISTRY`. El resto del pipeline no cambia.
+- **Backward compatibility en firmas de función**: `_generate_block(..., language="python")` y `clean_response(..., language="python")` con defaults preservan todos los tests existentes sin cambios.
+
+---
+
 ## Prueba comparativa de rendimiento por hardware
 
 Mismo agente, mismo modelo (deepseek-coder:6.7b), mismo repositorio de prueba (`codigo-para-testear`, 4 archivos Python).

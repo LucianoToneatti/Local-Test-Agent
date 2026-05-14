@@ -155,3 +155,113 @@ def test_fragment_each_fragment_parseable(tmp_path):
         for f in frag["functions"]:
             assert "name" in f
             assert "params" in f
+
+
+# ---------------------------------------------------------------------------
+# Tests JS/TS (HU-11)
+# ---------------------------------------------------------------------------
+
+def make_js_file(tmp_path, name, content):
+    f = tmp_path / name
+    f.write_text(content)
+    return str(tmp_path), [name]
+
+
+def test_extract_js_function_declaration(tmp_path):
+    code = "function add(a, b) {\n  return a + b;\n}\n"
+    repo_path, files = make_js_file(tmp_path, "calc.js", code)
+    result = extract(files, repo_path)
+    funcs = result["calc.js"]["functions"]
+    assert any(f["name"] == "add" for f in funcs)
+
+
+def test_extract_js_arrow_function(tmp_path):
+    code = "const multiply = (a, b) => {\n  return a * b;\n};\n"
+    repo_path, files = make_js_file(tmp_path, "calc.js", code)
+    result = extract(files, repo_path)
+    funcs = result["calc.js"]["functions"]
+    assert any(f["name"] == "multiply" for f in funcs)
+
+
+def test_extract_js_function_expression(tmp_path):
+    code = "const divide = function(a, b) {\n  return a / b;\n};\n"
+    repo_path, files = make_js_file(tmp_path, "calc.js", code)
+    result = extract(files, repo_path)
+    funcs = result["calc.js"]["functions"]
+    assert any(f["name"] == "divide" for f in funcs)
+
+
+def test_extract_js_class_with_methods(tmp_path):
+    code = (
+        "class Calculator {\n"
+        "  constructor(base) {\n"
+        "    this.base = base;\n"
+        "  }\n"
+        "  add(x) {\n"
+        "    return this.base + x;\n"
+        "  }\n"
+        "}\n"
+    )
+    repo_path, files = make_js_file(tmp_path, "calc.js", code)
+    result = extract(files, repo_path)
+    classes = result["calc.js"]["classes"]
+    assert len(classes) == 1
+    cls = classes[0]
+    assert cls["name"] == "Calculator"
+    assert cls["type"] == "class"
+    method_names = [m["name"] for m in cls["methods"]]
+    assert "add" in method_names
+    assert "constructor" in method_names
+
+
+def test_extract_js_class_methods_not_in_functions(tmp_path):
+    code = (
+        "class Foo {\n"
+        "  bar(x) {\n"
+        "    return x;\n"
+        "  }\n"
+        "}\n"
+    )
+    repo_path, files = make_js_file(tmp_path, "foo.js", code)
+    result = extract(files, repo_path)
+    func_names = [f["name"] for f in result["foo.js"]["functions"]]
+    assert "bar" not in func_names
+
+
+def test_extract_js_export_function(tmp_path):
+    code = "export function greet(name) {\n  return `Hello ${name}`;\n}\n"
+    repo_path, files = make_js_file(tmp_path, "greet.js", code)
+    result = extract(files, repo_path)
+    funcs = result["greet.js"]["functions"]
+    assert any(f["name"] == "greet" for f in funcs)
+
+
+def test_extract_ts_file(tmp_path):
+    code = "function greet(name: string): string {\n  return `Hello ${name}`;\n}\n"
+    repo_path, files = make_js_file(tmp_path, "greet.ts", code)
+    result = extract(files, repo_path)
+    funcs = result["greet.ts"]["functions"]
+    assert any(f["name"] == "greet" for f in funcs)
+
+
+def test_extract_js_empty_file(tmp_path):
+    repo_path, files = make_js_file(tmp_path, "empty.js", "")
+    result = extract(files, repo_path)
+    assert result["empty.js"]["functions"] == []
+    assert result["empty.js"]["classes"] == []
+    assert result["empty.js"]["imports"] == []
+
+
+def test_extract_js_read_error(tmp_path):
+    repo_path = str(tmp_path)
+    result = extract(["nonexistent.js"], repo_path)
+    assert "parse_error" in result["nonexistent.js"]
+
+
+def test_extract_js_function_lineno(tmp_path):
+    code = "function foo() {\n  return 1;\n}\n"
+    repo_path, files = make_js_file(tmp_path, "foo.js", code)
+    result = extract(files, repo_path)
+    func = result["foo.js"]["functions"][0]
+    assert func["_lineno"] == 1
+    assert func["_end_lineno"] == 3

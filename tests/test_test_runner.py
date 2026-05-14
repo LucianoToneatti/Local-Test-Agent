@@ -1,11 +1,18 @@
 import importlib.util
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agent.test_runner import _attach_collection_tracebacks, _attach_tracebacks, _parse_output, run
+from agent.test_runner import (
+    _attach_collection_tracebacks,
+    _attach_tracebacks,
+    _parse_output,
+    _parse_jest_output,
+    run,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -25,8 +32,11 @@ def _make_subprocess_result(stdout="", stderr="", returncode=0):
 # ---------------------------------------------------------------------------
 
 def test_run_pytest_not_installed(capsys, monkeypatch):
+    # _run_pytest verifica pytest ANTES de verificar el directorio, así que
+    # una ruta inexistente es suficiente para aislar el check de pytest sin
+    # que _run_jest encuentre archivos .test.js reales.
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
-    result = run("tests_generados/")
+    result = run("nonexistent_dir_xyz_abc")
     assert result == {}
     captured = capsys.readouterr()
     assert "pip install pytest" in captured.out
@@ -251,3 +261,106 @@ def test_run_captures_stderr(tmp_path, monkeypatch, capsys):
         result = run(str(tmp_path))
     # No debe lanzar excepción; stderr se captura y procesa normalmente
     assert isinstance(result, dict)
+
+
+# ---------------------------------------------------------------------------
+# _parse_jest_output — parseo de resultados Jest JSON (HU-11)
+# ---------------------------------------------------------------------------
+
+def _make_jest_json(tests: list[dict], file_path: str = "/tmp/calc.test.js") -> str:
+    data = {
+        "testResults": [
+            {
+                "testFilePath": file_path,
+                "assertionResults": tests,  # clave real del JSON de Jest
+            }
+        ]
+    }
+    return json.dumps(data)
+
+
+def test_parse_jest_output_passed():
+    stdout = _make_jest_json([{"title": "adds two numbers", "status": "passed", "failureMessages": []}])
+    result = _parse_jest_output(stdout)
+    assert any("adds two numbers" in k for k in result)
+    statuses = [v["status"] for v in result.values()]
+    assert "passed" in statuses
+
+
+def test_parse_jest_output_failed():
+    stdout = _make_jest_json([
+        {"title": "handles zero", "status": "failed", "failureMessages": ["Expected 0 to be 1"]}
+    ])
+    result = _parse_jest_output(stdout)
+    test_id = next(k for k in result if "handles zero" in k)
+    assert result[test_id]["status"] == "failed"
+    assert result[test_id]["traceback"] is not None
+    assert "Expected 0 to be 1" in result[test_id]["traceback"]
+
+
+def test_parse_jest_output_empty_json():
+    assert _parse_jest_output("") == {}
+
+
+def test_parse_jest_output_invalid_json():
+    assert _parse_jest_output("not json at all") == {}
+
+
+def test_parse_jest_output_multiple_tests():
+    stdout = _make_jest_json([
+        {"title": "test A", "status": "passed", "failureMessages": []},
+        {"title": "test B", "status": "failed", "failureMessages": ["Error"]},
+    ])
+    result = _parse_jest_output(stdout)
+    assert len(result) == 2
+
+
+def test_parse_jest_output_no_traceback_when_passed():
+    stdout = _make_jest_json([{"title": "ok", "status": "passed", "failureMessages": []}])
+    result = _parse_jest_output(stdout)
+    test_id = next(iter(result))
+    assert result[test_id]["traceback"] is None
+
+
+# ---------------------------------------------------------------------------
+# _run_jest — detección de Node.js no instalado (HU-11)
+# ---------------------------------------------------------------------------
+
+def test_run_jest_no_node_prints_error(tmp_path, capsys):
+    (tmp_path / "calc.test.js").write_text("test('x', () => {})")
+    with patch("agent.test_runner.shutil.which", return_value=None):
+        from agent.test_runner import _run_jest
+        result = _run_jest(str(tmp_path))
+    assert result == {}
+    captured = capsys.readouterr()
+    assert "Node.js" in captured.out
+
+
+def test_run_jest_no_js_files_returns_empty(tmp_path):
+    from agent.test_runner import _run_jest
+    result = _run_jest(str(tmp_path))
+    assert result == {}
+
+
+def test_run_combines_pytest_and_jest_results(tmp_path, monkeypatch):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    (tmp_path / "calc.test.js").write_text("test('x', () => {})")
+
+    jest_json = _make_jest_json(
+        [{"title": "js test", "status": "passed", "failureMessages": []}],
+        file_path=str(tmp_path / "calc.test.js"),
+    )
+    pytest_stdout = "tests_generados/unit/test_calc.py::test_py PASSED\n"
+
+    def fake_subprocess(*args, **kwargs):
+        cmd = args[0]
+        if "jest" in cmd:
+            return _make_subprocess_result(stdout=jest_json)
+        return _make_subprocess_result(stdout=pytest_stdout)
+
+    with patch("agent.test_runner.subprocess.run", side_effect=fake_subprocess):
+        with patch("agent.test_runner.shutil.which", return_value="/usr/bin/node"):
+            result = run(str(tmp_path))
+
+    assert any("js test" in k for k in result)
+    assert any("test_py" in k for k in result)
