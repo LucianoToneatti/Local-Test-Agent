@@ -58,7 +58,12 @@ def _run_pytest(tests_dir: str) -> dict:
 
 
 def _run_jest(tests_dir: str) -> dict:
-    """Ejecuta Jest sobre *.test.js y *.test.ts en tests_dir si los hay."""
+    """
+    Ejecuta Jest sobre *.test.js y *.test.ts en tests_dir si los hay.
+
+    Corre Jest una vez por cada subdirectorio que tenga su propio jest.config.js,
+    para que unit/ e integration/ puedan tener configuraciones independientes.
+    """
     tests_path = Path(tests_dir)
     if not tests_path.exists():
         return {}
@@ -72,32 +77,29 @@ def _run_jest(tests_dir: str) -> dict:
         print("    Instalá Node.js desde https://nodejs.org")
         return {}
 
-    # Correr desde el directorio que contiene jest.config.js, no desde tests_dir.
-    # agent.py pasa "tests_generados/" pero jest.config.js vive en "tests_generados/unit/".
-    jest_cwd = _find_jest_cwd(js_files, tests_path)
-
-    result = subprocess.run(
-        ["npx", "jest", "--json", "--no-coverage"],
-        capture_output=True,
-        text=True,
-        cwd=str(jest_cwd),
-    )
-
-    return _parse_jest_output(result.stdout)
-
-
-def _find_jest_cwd(js_files: list, fallback: Path) -> Path:
-    """
-    Devuelve el directorio desde donde correr Jest.
-    Prefiere el directorio de los archivos de test que tenga jest.config.js.
-    Si no hay config, usa el directorio común de los archivos JS.
-    """
+    # Recolectar los directorios con jest.config.js, en orden de aparición
+    config_dirs: list[Path] = []
+    seen: set[Path] = set()
     for f in js_files:
-        candidate = f.parent
-        if (candidate / "jest.config.js").exists():
-            return candidate
-    # Fallback: directorio padre común de los archivos JS encontrados
-    return js_files[0].parent if js_files else fallback
+        d = f.parent
+        if d not in seen and (d / "jest.config.js").exists():
+            config_dirs.append(d)
+            seen.add(d)
+
+    if not config_dirs:
+        config_dirs = [js_files[0].parent]
+
+    results = {}
+    for cwd in config_dirs:
+        result = subprocess.run(
+            ["npx", "jest", "--json", "--no-coverage"],
+            capture_output=True,
+            text=True,
+            cwd=str(cwd),
+        )
+        results.update(_parse_jest_output(result.stdout))
+
+    return results
 
 
 def _parse_jest_output(stdout: str) -> dict:

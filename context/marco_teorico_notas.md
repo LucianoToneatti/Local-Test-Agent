@@ -565,6 +565,56 @@ Se eligió **CommonJS (`require()`)** en lugar de ES Modules (`import`). Razón:
 
 ---
 
+## HU-12 — Tests de integración JavaScript/TypeScript con Jest
+
+### Qué se implementó
+
+- `prompts/prompt_builder.py`: se agregó `JsIntegrationPromptTemplate` registrada como `"javascript_integration"`. El system prompt instruye al LLM a generar solo bloques `describe()/test()` sin `require()`, testear únicamente funciones de A que llamen a B internamente, sin mocks, con valores concretos esperados.
+- `agent/integration_generator.py`: se extendió con soporte JS/TS completo:
+  - `_find_js_pairs()`: detecta pares de archivos `.js/.ts` relacionados por el campo `imports` ya calculado por `ast_extractor`. No requiere re-parsear los archivos.
+  - `_format_js_signatures()`: formatea firmas de funciones del módulo B como `function nombre(params) { ... }` para el prompt.
+  - `_build_js_require_header()`: construye el header `const { fn1, fn2 } = require('stem')` a partir de las funciones del módulo A que ya están en `ast_result` — el agente controla los imports, no el LLM.
+  - `_generate_js_pair_test()`: llama al LLM, limpia con `clean_response(..., strip_imports=True, language="javascript")`, valida presencia de `test(`/`describe(`/`it(`, reintenta una vez si falla.
+  - `_write_js_jest_config()`: escribe `jest.config.js` en `tests_generados/integration/` con `modulePaths: [repo]`.
+  - `generate()` extendida: itera pares JS después de los Python dentro del mismo directorio `tests_generados/integration/`.
+- `agent/test_runner.py`: `_run_jest()` reemplazada para detectar todos los subdirectorios con su propio `jest.config.js` y correr Jest una vez por cada uno, mergeando los resultados. Elimina `_find_jest_cwd()`, que solo encontraba el primer directorio con config y dejaba los demás invisibles.
+
+### Por qué no usar mocks en los tests de integración
+
+Los mocks son una herramienta de testing unitario: aíslan la unidad bajo test reemplazando sus dependencias por objetos controlados. En un test unitario de `promedio()`, un mock de `sumar()` garantiza que `promedio()` se testa de forma independiente. Pero en un test de integración, eso mismo es la falla de diseño.
+
+Un test de integración tiene un objetivo diferente: verificar que la interacción real entre módulos produce los resultados correctos. Si en `estadistica.js` → `calculadora.js` mockeamos las funciones de `calculadora`, el test ya no verifica que `promedio()` llama correctamente a `sumar()` y `dividir()` y que esas funciones devuelven los valores que `promedio()` espera. Verifica que `promedio()` llama a los mocks con los argumentos que se configuraron — lo que no dice nada sobre el comportamiento real del sistema.
+
+El valor de un test de integración sin mocks es precisamente que detecta errores en la interfaz entre módulos: cambios de nombre de función en B que A todavía llama con el nombre viejo, cambios de contrato (el tipo de retorno que A espera de B no coincide con lo que B ahora devuelve), errores en la secuencia de llamadas. Ninguno de estos errores aparece si B está mockeado.
+
+Nota: el LLM generado por DeepSeek Coder 6.7b a veces incluye mocks a pesar de la instrucción explícita en el prompt ("No mocks — let A call B for real"). Este es un problema de instruction-following del modelo, no del framework. Los tests con mocks fallan al correr (usan `mockClear()` sobre objetos no mockeados), son capturados como `failed`, y el autocorrector puede intentar corregirlos. El pipeline trata este caso igual que cualquier test fallido.
+
+### Decisiones de diseño
+
+**El agente construye el header `require()`, no el LLM**: igual que en HU-11 para tests unitarios. El agente conoce exactamente qué funciones exporta el módulo A (las tiene del `ast_result`); delegarle al LLM esa información introduce una fuente de error innecesaria. El LLM genera la lógica de los tests; el agente genera los imports.
+
+**`modulePaths` en jest.config.js apunta al repo analizado**: permite usar `require('estadistica')` sin rutas relativas en los tests. Este es el mismo mecanismo del `conftest.py` de Python (que agrega el repo a `sys.path`): el runner puede importar por nombre de módulo, sin importar dónde está el archivo de test físicamente. El módulo A resuelve su propio `require('./calculadora')` de forma relativa desde su ubicación — Jest no interfiere en eso.
+
+**Un `jest.config.js` por directorio, un proceso Jest por config**: `unit/` e `integration/` tienen configuraciones independientes (distintas rutas en `modulePaths`, potencialmente distintos patrones de test). Correrlos desde un config raíz implicaría mezclar `modulePaths` de todos los repos analizados. Correr Jest una vez por directorio con config propia es más limpio y no requiere un config raíz que coordine.
+
+**Validación de output JS por heurística de texto**: sin `ast.parse()` disponible para JavaScript, la validación de si el LLM generó código válido usa una heurística: el output debe contener `test(`, `describe(` o `it(`. Esta heurística no detecta errores de sintaxis JS (braces mal cerrados, etc.), pero coincide con la validación usada en HU-11 para tests unitarios. El error de sintaxis se detectará cuando Jest intente correr el archivo y el test_runner lo reportará como `error`.
+
+**Convención de nombre `{stem_a}_{stem_b}.test.js`**: Jest requiere la extensión `.test.js` para descubrir tests. A diferencia de Python (donde se usa `test_{a}_{b}.py`), la convención JS ubica el calificador `.test.` antes de la extensión, lo que es estándar en el ecosistema Jest/JavaScript.
+
+### Conceptos teóricos aplicados
+
+- **Tests de integración vs. unitarios**: los unitarios aíslan (mocks); los de integración conectan (real). La decisión de no usar mocks no es una restricción técnica sino una decisión de diseño que define el tipo de test que se genera.
+- **`modulePaths` en Jest**: equivalente a `sys.path` en Python — agrega rutas al sistema de resolución de módulos de Node.js durante la ejecución de tests.
+- **Reutilización del grafo de imports**: `ast_extractor` ya construye el grafo de dependencias entre módulos (campo `imports`). `_find_js_pairs()` y `_find_pairs()` (Python) consumen ese grafo sin re-parsear los archivos — separación limpia entre extracción de datos y uso de datos.
+
+### Deuda técnica / pendientes
+
+- El LLM genera mocks con frecuencia a pesar de la instrucción (limitación del modelo 6.7b). Un segundo sistema prompt con ejemplo explícito (few-shot) podría mejorar la adherencia.
+- Si A y B están en directorios distintos, `modulePaths` solo apunta al directorio de A. Los imports de B desde A seguirán funcionando (rutas relativas), pero si algún test necesitara `require('nombre_de_B')` directamente, fallaría. Para v1, A y B en el mismo directorio es el caso prácticamente universal.
+- No hay autocorrección para tests de integración JS (el autocorrector actual solo maneja Python). Los tests JS fallidos quedan como `failed` en el reporte.
+
+---
+
 ## Prueba comparativa de rendimiento por hardware
 
 Mismo agente, mismo modelo (deepseek-coder:6.7b), mismo repositorio de prueba (`codigo-para-testear`, 4 archivos Python).
