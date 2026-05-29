@@ -2,8 +2,8 @@
 Generador de reporte de resultados de tests.
 
 Consume el dict final producido por autocorrector.autocorrect() y escribe
-reporte.md en la raíz del agente con un resumen de passed/failed/sin_resolver
-y el tiempo total de ejecución.
+reporte.md en la raiz del agente con un resumen de passed/failed/sin_resolver,
+tiempo total de ejecucion y cobertura de codigo (si esta disponible).
 """
 
 import datetime
@@ -12,16 +12,22 @@ import pathlib
 _OUTPUT_PATH = pathlib.Path(__file__).parent.parent / "reporte.md"
 
 
-def generate(results: dict, repo_name: str, elapsed: float) -> None:
+def generate(
+    results: dict,
+    repo_name: str,
+    elapsed: float,
+    coverage_pct: float | None = None,
+) -> None:
     """
-    Genera reporte.md en la raíz del agente con resumen de resultados.
+    Genera reporte.md en la raiz del agente con resumen de resultados.
 
     Args:
         results: Dict final producido por autocorrector.autocorrect().
                  Formato: {test_id: {'status': str, 'traceback': str|None, 'attempts': list}}
-                 También acepta el dict directo de test_runner.run() (sin campo 'attempts').
+                 Tambien acepta el dict directo de test_runner.run() (sin campo 'attempts').
         repo_name: Nombre del repositorio analizado (e.g. "examples").
-        elapsed: Tiempo total de ejecución en segundos.
+        elapsed: Tiempo total de ejecucion en segundos.
+        coverage_pct: Porcentaje de cobertura de codigo, o None si no disponible.
     """
     passed = sum(1 for v in results.values() if v["status"] == "passed")
     failed_items = [
@@ -33,12 +39,14 @@ def generate(results: dict, repo_name: str, elapsed: float) -> None:
 
     fecha = datetime.date.today().isoformat()
     total = len(results)
+    cov_str = f"{coverage_pct:.0f}%" if coverage_pct is not None else "N/A"
 
     lines = [
         f"# Reporte de tests — {repo_name}",
         "",
         f"**Fecha:** {fecha}",
         f"**Tiempo total:** {elapsed:.1f}s",
+        f"**Cobertura:** {cov_str}",
         "",
         "## Resumen",
         "",
@@ -47,6 +55,7 @@ def generate(results: dict, repo_name: str, elapsed: float) -> None:
         f"| Passed | {passed} |",
         f"| Failed | {len(failed_items)} |",
         f"| Sin resolver | {len(unresolved_items)} |",
+        f"| Cobertura | {cov_str} |",
         "",
         f"**Total:** {total} tests",
     ]
@@ -86,13 +95,13 @@ def generate(results: dict, repo_name: str, elapsed: float) -> None:
 
 def _last_traceback_line(traceback: str | None) -> str:
     """
-    Extrae la última línea no vacía de un traceback.
+    Extrae la ultima linea no vacia de un traceback.
 
     Args:
         traceback: Texto completo del traceback, o None.
 
     Returns:
-        Última línea no vacía del traceback, o 'sin mensaje de error' si no hay contenido.
+        Ultima linea no vacia del traceback, o 'sin mensaje de error' si no hay contenido.
     """
     if not traceback:
         return "sin mensaje de error"
