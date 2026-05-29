@@ -12,7 +12,7 @@ El agente recibe la ruta a un repositorio Python y realiza automáticamente los 
 4. **Genera tests de integración** para pares de módulos relacionados por imports
 5. **Ejecuta los tests** generados con pytest
 6. **Autocorrige** los tests fallidos (hasta 3 intentos por test, consultando al LLM)
-7. **Genera un reporte** `reporte.md` con el resumen de resultados y tiempo total
+7. **Genera un reporte** `reporte.md` con el resumen de resultados, cobertura de código y tiempo total
 
 Los tests se guardan en `tests_generados/unit/` y `tests_generados/integration/`. Cada directorio incluye un `conftest.py` generado automáticamente que agrega el repositorio analizado al `sys.path`.
 
@@ -27,56 +27,45 @@ Los tests se guardan en `tests_generados/unit/` y `tests_generados/integration/`
 
 ## Instalación
 
-### 1. Instalar Ollama
-
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-Verificar que quedó activo:
-
-```bash
-ollama --version
-```
-
-Si necesitás iniciarlo manualmente:
-
-```bash
-ollama serve
-```
-
-### 2. Descargar el modelo
-
-```bash
-ollama pull deepseek-coder:6.7b
-```
-
-La descarga es ~3.8 GB. Verificar que quedó disponible:
-
-```bash
-ollama list
-```
-
-Deberías ver `deepseek-coder:6.7b` en la lista.
-
-### 3. Clonar el repositorio
+Usá el script de instalación que crea el venv, instala dependencias y verifica Ollama en un solo paso:
 
 ```bash
 git clone <url-del-repo>
 cd Local-Test-Agent
+bash install.sh
 ```
 
-### 4. Crear entorno virtual e instalar dependencias
+El script realiza automáticamente:
+1. Crea el entorno virtual `venv/` si no existe
+2. Instala `pytest`, `pytest-cov` y `requests`
+3. Verifica que Ollama esté instalado
+4. Descarga el modelo `deepseek-coder:6.7b` si no está disponible
+
+### Instalación manual (alternativa)
+
+Si preferís hacerlo paso a paso:
 
 ```bash
+# 1. Instalar Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 2. Descargar el modelo (~3.8 GB)
+ollama pull deepseek-coder:6.7b
+
+# 3. Clonar el repositorio
+git clone <url-del-repo>
+cd Local-Test-Agent
+
+# 4. Crear entorno virtual e instalar dependencias
 python3 -m venv venv
 source venv/bin/activate
-pip install pytest requests
+pip install pytest pytest-cov requests
 ```
 
 ## Uso
 
 ```bash
+source venv/bin/activate
 python3 agent.py --repo ./ruta/al/repo
 ```
 
@@ -91,26 +80,50 @@ python3 agent.py --repo /home/usuario/proyectos/mi-app
 ### Salida esperada
 
 ```
++-----------------------------+
+|  Local-Test-Agent v1.0     |
++-----------------------------+
+
 [*] Analizando repositorio 'examples'...
-[*] Generando tests unitarios...
+[*] Generando tests unitarios (2 archivo(s))...
+  [=============================>] 100% estadistica.py
 [OK] tests_generados/unit/
 
-[*] Generando tests de integración...
+[*] Generando tests de integracion...
+  [=============================>] 100% estadistica+calculadora
 [OK] tests_generados/integration/
 
 [*] Ejecutando tests generados...
-[*] Resultados: 12 passed, 2 failed/error
-[*] Autocorrigiendo tests fallidos (hasta 3 intentos por test)...
-[OK] Autocorrección: 2 resueltos, 0 sin resolver
+  [PASS] tests_generados/unit/test_calculadora.py::test_sumar
+  [PASS] tests_generados/unit/test_calculadora.py::test_restar
+  [FAIL] tests_generados/unit/test_estadistica.py::test_promedio
+  [PASS] tests_generados/integration/test_estadistica_calculadora.py::test_flujo
+
+[*] Autocorrigiendo 1 test(s) fallido(s) (hasta 3 intentos)...
+[OK] Autocorreccion: 1 resuelto(s), 0 sin resolver
 
 [*] Generando reporte...
 [OK] Reporte generado: reporte.md
+
++--- Resumen final ---+
+  Passed:       4
+  Failed:       0
+  Sin resolver: 0
+  Total:        4
+  Cobertura:    78%
+  Tiempo:       3m 42s
 ```
 
 ### Correr los tests generados manualmente
 
 ```bash
 pytest tests_generados/ -v
+```
+
+### Correr con cobertura manualmente
+
+```bash
+pytest tests_generados/ -v --cov=./ruta/al/repo --cov-report=term-missing
 ```
 
 ## Qué genera el agente
@@ -121,7 +134,7 @@ pytest tests_generados/ -v
 | `tests_generados/unit/conftest.py` | Agrega el repo al `sys.path` para pytest |
 | `tests_generados/integration/test_<a>_<b>.py` | Tests de integración para pares de módulos relacionados |
 | `tests_generados/integration/conftest.py` | Ídem, para la carpeta de integración |
-| `reporte.md` | Resumen de resultados: passed, failed, sin resolver y tiempo total |
+| `reporte.md` | Resumen de resultados: passed, failed, sin resolver, cobertura y tiempo total |
 
 ## Estructura del proyecto
 
@@ -134,8 +147,9 @@ Local-Test-Agent/
 │   ├── llm_client.py           # Cliente HTTP para la API local de Ollama
 │   ├── report_generator.py     # Generación de reporte.md
 │   ├── repo_explorer.py        # Exploración de archivos .py del repositorio
+│   ├── terminal_ui.py          # Interfaz de terminal con colores ANSI
 │   ├── test_generator.py       # Generación de tests unitarios
-│   └── test_runner.py          # Ejecución de tests con pytest
+│   └── test_runner.py          # Ejecución de tests con pytest y coverage
 ├── prompts/
 │   └── prompt_builder.py       # Construcción de prompts para el LLM
 ├── examples/                   # Repositorio de ejemplo (calculadora, estadistica)
@@ -145,6 +159,7 @@ Local-Test-Agent/
 │   └── integration/
 ├── context/                    # Notas de diseño y decisiones técnicas
 ├── agent.py                    # Punto de entrada
+├── install.sh                  # Script de instalación
 ├── reporte.md                  # Reporte del último run (generado automáticamente)
 └── README.md
 ```
@@ -154,5 +169,5 @@ Local-Test-Agent/
 - **Tiempo de ejecución:** el agente llama al LLM una vez por función/método encontrado. Un repositorio con 50 funciones puede tardar 15-30 minutos dependiendo del hardware. Repositorios grandes pueden tardar horas.
 - **Calidad de los tests:** los tests son generados por un LLM y pueden contener errores lógicos ocasionales. Revisarlos antes de incorporarlos a un pipeline de CI.
 - **Un modelo a la vez:** Ollama sirve un modelo a la vez. Si tenés otro modelo corriendo en paralelo puede afectar la performance.
-- **Solo Python:** el agente analiza exclusivamente archivos `.py`. Otros lenguajes son ignorados por ahora.
+- **Cobertura solo para Python:** `pytest-cov` solo reporta cobertura para los archivos Python analizados. Los tests JavaScript no contribuyen al porcentaje de cobertura.
 - **Tests generados no se versionan:** `tests_generados/` está en `.gitignore`. Cada ejecución sobreescribe los tests anteriores para el mismo repo.
