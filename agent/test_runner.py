@@ -161,13 +161,13 @@ def _run_maven(tests_dir: str) -> dict:
     results = {}
     for pom_path in pom_files:
         maven_root = pom_path.parent
-        subprocess.run(
+        proc = subprocess.run(
             ["mvn", "test", "--batch-mode"],
-            capture_output=True,
             text=True,
             cwd=str(maven_root),
         )
-        results.update(_parse_surefire_reports(maven_root / "target" / "surefire-reports"))
+        surefire_dir = maven_root / "target" / "surefire-reports"
+        results.update(_parse_surefire_reports(surefire_dir))
 
     return results
 

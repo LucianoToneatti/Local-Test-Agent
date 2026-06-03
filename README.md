@@ -19,11 +19,15 @@ Los tests se guardan en `tests_generados/unit/` y `tests_generados/integration/`
 ## Requisitos previos
 
 - **Sistema operativo:** Linux (probado en Debian/Ubuntu)
-- **Python:** 3.10 o superior
+- **Python:** 3.11 o superior
+- **pip + venv:** incluidos con Python 3.11+
+- **pytest-cov:** instalado dentro del venv (el `install.sh` lo hace automáticamente)
+- **Java:** 11 o superior (el proyecto fue desarrollado con Java 24 vía SDKMAN)
+- **Maven:** 3.9 o superior (vía SDKMAN)
+- **Node.js + Jest:** requeridos para correr tests JavaScript/TypeScript
+- **Ollama** con el modelo `deepseek-coder:6.7b` descargado
 - **RAM:** mínimo 8 GB recomendados (el modelo ocupa ~4 GB en RAM)
 - **Espacio en disco:** ~4 GB para el modelo
-- **Ollama** instalado y corriendo
-- **Modelo** `deepseek-coder:6.7b` descargado
 
 ## Instalación
 

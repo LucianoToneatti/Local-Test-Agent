@@ -213,16 +213,31 @@ class JavaPromptTemplate(PromptTemplate):
         "- Use JUnit 5: @Test annotation, assertEquals, assertThrows, assertTrue, etc.\n"
         "- Cover: happy path, edge case, and expected exception (use assertThrows).\n"
         "- Name tests as: testMethodName_scenario (camelCase).\n"
-        "- Each method must be: @Test\\nvoid testName() { ... }"
+        "- Each method must be: @Test\\nvoid testName() { ... }\n"
+        "- NEVER use the L suffix on numeric literals. All integer numbers must be int. "
+        "If an operation may return long, use an explicit cast: (int)."
     )
 
     _USER_TEMPLATE = (
-        "Write JUnit 5 test methods for this Java method:\n\n"
+        "Complete source code of the class under test:\n\n"
+        "{class_source}\n\n"
+        "---\n\n"
+        "Write JUnit 5 test methods for this specific method:\n\n"
         "{code}\n\n"
-        "Method under test: {function_name} (in class {class_name})\n"
-        "Instantiate the class with: {class_name} obj = new {class_name}();\n\n"
+        "Method under test: {function_name} (in class {class_name})\n\n"
+        "STRICT RULES — read the source above and follow exactly:\n"
+        "- ONLY call methods that are explicitly declared public in the source above.\n"
+        "- Do NOT invent methods, getters, setters, or constructors that do not appear in the source.\n"
+        "- Do NOT access private fields directly.\n"
+        "- The only constructor available is: {class_name} obj = new {class_name}();\n"
+        "  (unless a different constructor is visible in the source above)\n\n"
+        "MANDATORY RULES for every @Test method:\n"
+        "1. Declare the object INSIDE the method: {class_name} obj = new {class_name}();\n"
+        "2. Never reference variables that are not declared in the same @Test method body.\n"
+        "3. Use assertEquals/assertThrows/assertTrue directly (static import is already provided).\n"
+        "4. Do NOT use Assertions.assertEquals — use assertEquals directly.\n\n"
         "OUTPUT RULES: output ONLY @Test void methods. "
-        "No class declaration, no imports, no package, no markdown, no backticks. "
+        "No class declaration, no @BeforeEach, no fields, no imports, no markdown. "
         "Start your response directly with '@Test'."
     )
 
@@ -232,10 +247,12 @@ class JavaPromptTemplate(PromptTemplate):
         function_name: Optional[str] = None,
         module_name: Optional[str] = None,
         class_name: Optional[str] = None,
+        class_source: str = "",
     ) -> BuiltPrompt:
         resolved_name = function_name or "metodo"
         resolved_class = class_name or module_name or "MiClase"
         user = self._USER_TEMPLATE.format(
+            class_source=class_source.strip() if class_source else "(source not available)",
             code=code.strip(),
             function_name=resolved_name,
             class_name=resolved_class,
@@ -441,6 +458,7 @@ class PromptBuilder:
         function_name: Optional[str] = None,
         module_name: Optional[str] = None,
         class_name: Optional[str] = None,
+        class_source: str = "",
     ) -> BuiltPrompt:
         template = _REGISTRY.get(language.lower())
         if template is None:
@@ -448,6 +466,8 @@ class PromptBuilder:
             raise ValueError(
                 f"Lenguaje '{language}' no soportado. Disponibles: {supported}"
             )
+        if language.lower() == "java":
+            return template.build(code, function_name, module_name, class_name, class_source=class_source)
         return template.build(code, function_name, module_name, class_name)
 
     @staticmethod
@@ -460,26 +480,33 @@ def clean_response(response: str, *, strip_imports: bool = False, language: str 
     Limpia el output del LLM eliminando bloques markdown y texto explicativo.
 
     Estrategia:
+    0. Elimina tokens especiales del modelo (p.ej. marcadores BOS/EOS de DeepSeek).
     1. Si hay bloques ```...```, extrae solo su contenido (el modelo los incluyó igual).
-    2. Si no hay bloques pero hay texto previo al código, descarta todo lo anterior
-       a la primera línea que empiece con el patrón de inicio para el lenguaje dado.
-    3. En cualquier caso, elimina backticks sueltos residuales.
+    2. Para Java: extrae solo los métodos @Test con conteo de llaves (elimina class
+       wrappers, líneas de lenguaje sueltas y basura de borde de contexto).
+    2. Para otros lenguajes: descarta texto previo al código buscando el patrón de inicio.
+    3. Elimina backticks sueltos residuales.
     4. Si strip_imports=True, elimina líneas de import según el lenguaje.
     """
+    # Paso 0: eliminar tokens especiales del modelo (DeepSeek usa ｜ U+FF5C como delimitador)
+    response = re.sub(r'<｜[^｜>]*｜>', '', response)
+
     # Paso 1: extraer contenido de bloques markdown si existen
     blocks = re.findall(
-        r"```(?:python|javascript|js|ts|typescript)?\n?(.*?)```",
+        r"```(?:python|javascript|js|ts|typescript|java)?\n?(.*?)```",
         response,
         flags=re.DOTALL,
     )
     if blocks:
         response = "\n\n".join(b.strip() for b in blocks)
 
-    # Paso 2: descartar texto explicativo antes del código
+    # Paso 2a: para Java, extraer solo métodos @Test con conteo de llaves
+    if language == "java":
+        return _extract_java_test_methods(response)
+
+    # Paso 2b: descartar texto explicativo antes del código (lenguajes no-Java)
     if language == "javascript":
         match = re.search(r"^(test\s*\(|describe\s*\(|it\s*\()", response, re.MULTILINE)
-    elif language == "java":
-        match = re.search(r"^(@Test|void\s+test)", response, re.MULTILINE)
     else:
         match = re.search(r"^(import |from |def test_)", response, re.MULTILINE)
     if match:
@@ -495,11 +522,6 @@ def clean_response(response: str, *, strip_imports: bool = False, language: str 
                 line for line in response.splitlines()
                 if not _is_js_import_line(line)
             )
-        elif language == "java":
-            response = "\n".join(
-                line for line in response.splitlines()
-                if not line.lstrip().startswith(("import ", "package "))
-            )
         else:
             response = "\n".join(
                 line for line in response.splitlines()
@@ -507,6 +529,74 @@ def clean_response(response: str, *, strip_imports: bool = False, language: str 
             )
 
     return response.strip()
+
+
+def _extract_java_test_methods(code: str) -> str:
+    """
+    Extrae bloques de métodos @Test de código Java usando conteo de llaves.
+
+    Elimina class wrappers, líneas de lenguaje sueltas ('java'), imports y
+    cualquier texto que no forme parte de un método @Test.  Normaliza la
+    indentación: los métodos quedan a 0 espacios para que _build_java_test_file
+    les agregue exactamente 4.
+    """
+    methods: list[str] = []
+    lines = code.splitlines()
+    i = 0
+    n = len(lines)
+
+    # Reconoce @Test y @org.junit.jupiter.api.Test (forma fully-qualified que usan algunos LLMs)
+    _JAVA_TEST_ANNO = re.compile(r'^\s*@(?:org\.junit\.jupiter\.api\.)?Test\b')
+
+    while i < n:
+        if not _JAVA_TEST_ANNO.match(lines[i]):
+            i += 1
+            continue
+
+        # Indentación base del @Test (para preservar indentación relativa del cuerpo)
+        base_indent = len(lines[i]) - len(lines[i].lstrip())
+        method_lines = ['@Test']
+        i += 1
+
+        depth = 0
+        in_body = False
+        malformed = False
+
+        while i < n:
+            raw = lines[i]
+            stripped = raw.strip()
+
+            # @Test dentro de un método en progreso = brace faltante: descartar método actual
+            # y dejar que el loop externo retome desde este @Test
+            if in_body and _JAVA_TEST_ANNO.match(raw):
+                malformed = True
+                break  # NO incrementar i; el loop externo lo procesa
+
+            i += 1
+            if not stripped:
+                if in_body:
+                    method_lines.append('')
+                continue
+            # Preservar indentación relativa al @Test
+            if len(raw) >= base_indent and raw[:base_indent] == ' ' * base_indent:
+                normalized = raw[base_indent:]
+            else:
+                normalized = stripped
+            opens = stripped.count('{')
+            closes = stripped.count('}')
+            depth += opens - closes
+            method_lines.append(normalized)
+            if opens > 0:
+                in_body = True
+            if in_body and depth <= 0:
+                break
+
+        if not malformed:
+            joined = '\n'.join(method_lines).rstrip()
+            if 'void' in joined and '{' in joined:
+                methods.append(joined)
+
+    return '\n\n'.join(methods) if methods else code
 
 
 def _is_js_import_line(line: str) -> bool:
