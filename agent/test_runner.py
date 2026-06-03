@@ -129,16 +129,16 @@ def _run_jest(tests_dir: str) -> dict:
 
 def _run_maven(tests_dir: str) -> dict:
     """
-    Ejecuta mvn test sobre el proyecto Maven en tests_dir si hay tests Java.
+    Ejecuta mvn test sobre proyectos Maven encontrados dentro de tests_dir.
 
-    Busca archivos *Test.java en src/test/java/. Si Maven no está instalado,
-    muestra un mensaje claro y retorna {}. Parsea los reportes XML de Surefire
-    para obtener resultados individuales por test.
+    Busca *Test.java recursivamente (no solo en src/test/java/ directo) para
+    soportar el caso en que tests_dir sea el directorio raíz de salida
+    (tests_generados/) y el proyecto Maven esté en un subdirectorio (unit/).
+    Para cada pom.xml encontrado corre Maven y parsea los XMLs de Surefire.
     """
     tests_path = Path(tests_dir).resolve()
-    java_test_dir = tests_path / "src" / "test" / "java"
 
-    java_files = list(java_test_dir.rglob("*Test.java")) if java_test_dir.exists() else []
+    java_files = list(tests_path.rglob("*Test.java"))
     if not java_files:
         return {}
 
@@ -147,23 +147,29 @@ def _run_maven(tests_dir: str) -> dict:
         print("    Los tests Java fueron generados pero no se pueden ejecutar.")
         print("    Para instalar Maven:")
         print("    sudo apt install maven")
-        print("    Una vez instalado, ejecutá:")
-        print(f"    cd {tests_path} && mvn test")
+        pom_files = list(tests_path.rglob("pom.xml"))
+        if pom_files:
+            print("    Una vez instalado, ejecutá:")
+            print(f"    cd {pom_files[0].parent} && mvn test")
         return {}
 
-    pom_path = tests_path / "pom.xml"
-    if not pom_path.exists():
-        print(f"[ERROR] pom.xml no encontrado en {tests_path}. Regenerá los tests.")
+    pom_files = list(tests_path.rglob("pom.xml"))
+    if not pom_files:
+        print("[ERROR] pom.xml no encontrado. Regenerá los tests.")
         return {}
 
-    subprocess.run(
-        ["mvn", "test", "--batch-mode"],
-        capture_output=True,
-        text=True,
-        cwd=str(tests_path),
-    )
+    results = {}
+    for pom_path in pom_files:
+        maven_root = pom_path.parent
+        subprocess.run(
+            ["mvn", "test", "--batch-mode"],
+            capture_output=True,
+            text=True,
+            cwd=str(maven_root),
+        )
+        results.update(_parse_surefire_reports(maven_root / "target" / "surefire-reports"))
 
-    return _parse_surefire_reports(tests_path / "target" / "surefire-reports")
+    return results
 
 
 def _parse_surefire_reports(reports_dir: Path) -> dict:
