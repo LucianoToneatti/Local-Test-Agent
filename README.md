@@ -64,8 +64,11 @@ pip install pytest pytest-cov requests
 
 ## Uso
 
+# Activar el entorno virtual (requerido)
 ```bash
 source venv/bin/activate
+```
+```bash
 python3 agent.py --repo ./ruta/al/repo
 ```
 
