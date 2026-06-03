@@ -10,7 +10,7 @@ from pathlib import Path
 
 IGNORED_DIRS = {'__pycache__', '.git', 'venv', '.venv', 'dist', 'node_modules', '.tox', 'build', 'egg-info'}
 
-_SUPPORTED_EXTENSIONS = ('.py', '.js', '.ts')
+_SUPPORTED_EXTENSIONS = ('.py', '.js', '.ts', '.java')
 
 
 def explore(repo_path: str) -> list[str]:

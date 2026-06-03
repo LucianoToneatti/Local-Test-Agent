@@ -11,8 +11,10 @@ from agent.test_generator import (
     _generate_block,
     _build_import_header,
     _build_js_import_header,
+    _build_java_test_file,
     _detect_language,
     _write_conftest,
+    _write_java_pom,
     OUTPUT_DIR,
 )
 from prompts.prompt_builder import clean_response
@@ -478,3 +480,182 @@ def test_generate_block_js_invalid_output_falls_back_to_error():
             client, source_lines, _make_unit("add"), "calc", None, language="javascript"
         )
     assert result.startswith("# ERROR: no se pudo generar tests para")
+
+
+# ---------------------------------------------------------------------------
+# Tests de _detect_language para Java (HU-14)
+# ---------------------------------------------------------------------------
+
+def test_detect_language_java():
+    assert _detect_language("Calculadora.java") == "java"
+
+
+def test_detect_language_java_nested():
+    assert _detect_language("src/Calculadora.java") == "java"
+
+
+# ---------------------------------------------------------------------------
+# Tests de _build_java_test_file (HU-14)
+# ---------------------------------------------------------------------------
+
+VALID_JAVA_BLOCK = "@Test\nvoid testSuma_happyPath() {\n    assertEquals(5, obj.suma(2, 3));\n}"
+
+
+def test_build_java_test_file_contains_class_wrapper():
+    result = _build_java_test_file("Calculadora", [VALID_JAVA_BLOCK])
+    assert "class CalculadoraTest {" in result
+    assert result.strip().endswith("}")
+
+
+def test_build_java_test_file_contains_junit_imports():
+    result = _build_java_test_file("Calculadora", [VALID_JAVA_BLOCK])
+    assert "import org.junit.jupiter.api.Test;" in result
+    assert "import static org.junit.jupiter.api.Assertions.*;" in result
+
+
+def test_build_java_test_file_indents_blocks():
+    result = _build_java_test_file("Calc", [VALID_JAVA_BLOCK])
+    lines = result.splitlines()
+    test_line = next(l for l in lines if "@Test" in l)
+    assert test_line.startswith("    ")
+
+
+def test_build_java_test_file_multiple_blocks():
+    block2 = "@Test\nvoid testResta_happyPath() {\n    assertEquals(1, obj.resta(3, 2));\n}"
+    result = _build_java_test_file("Calc", [VALID_JAVA_BLOCK, block2])
+    assert "testSuma_happyPath" in result
+    assert "testResta_happyPath" in result
+
+
+# ---------------------------------------------------------------------------
+# Tests de _write_java_pom (HU-14)
+# ---------------------------------------------------------------------------
+
+def test_write_java_pom_creates_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_java_pom()
+    pom = tmp_path / "tests_generados" / "unit" / "pom.xml"
+    assert pom.exists()
+
+
+def test_write_java_pom_contains_junit5(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_java_pom()
+    content = (tmp_path / "tests_generados" / "unit" / "pom.xml").read_text()
+    assert "junit-jupiter" in content
+    assert "5.10.0" in content
+
+
+def test_write_java_pom_idempotent(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_java_pom()
+    pom = tmp_path / "tests_generados" / "unit" / "pom.xml"
+    original = pom.read_text()
+    _write_java_pom()  # segunda llamada no debe sobrescribir
+    assert pom.read_text() == original
+
+
+# ---------------------------------------------------------------------------
+# Tests de generate() con archivos Java (HU-14)
+# ---------------------------------------------------------------------------
+
+def _make_java_ast_result():
+    return {
+        "Calculadora.java": {
+            "functions": [],
+            "classes": [
+                {
+                    "name": "Calculadora",
+                    "type": "class",
+                    "docstring": "",
+                    "methods": [
+                        {"name": "suma", "params": ["a", "b"], "_lineno": 2, "_end_lineno": 4},
+                    ],
+                }
+            ],
+            "imports": [],
+        }
+    }
+
+
+def _make_repo_with_java_calc(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    calc = tmp_path / "Calculadora.java"
+    calc.write_text(
+        "public class Calculadora {\n"
+        "    public int suma(int a, int b) {\n"
+        "        return a + b;\n"
+        "    }\n"
+        "}\n"
+    )
+    return str(tmp_path)
+
+
+def test_generate_java_creates_test_java_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    repo = _make_repo_with_java_calc(tmp_path / "repo")
+    ast_result = _make_java_ast_result()
+
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = VALID_JAVA_BLOCK
+        generate(repo, ast_result)
+
+    java_test = tmp_path / "tests_generados" / "unit" / "src" / "test" / "java" / "CalculadoraTest.java"
+    assert java_test.exists()
+
+
+def test_generate_java_test_file_has_junit_header(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    repo = _make_repo_with_java_calc(tmp_path / "repo")
+    ast_result = _make_java_ast_result()
+
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = VALID_JAVA_BLOCK
+        generate(repo, ast_result)
+
+    content = (
+        tmp_path / "tests_generados" / "unit" / "src" / "test" / "java" / "CalculadoraTest.java"
+    ).read_text()
+    assert "import org.junit.jupiter.api.Test;" in content
+    assert "class CalculadoraTest" in content
+
+
+def test_generate_java_creates_pom(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    repo = _make_repo_with_java_calc(tmp_path / "repo")
+    ast_result = _make_java_ast_result()
+
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = VALID_JAVA_BLOCK
+        generate(repo, ast_result)
+
+    pom = tmp_path / "tests_generados" / "unit" / "pom.xml"
+    assert pom.exists()
+
+
+def test_generate_java_copies_sources(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    repo = _make_repo_with_java_calc(tmp_path / "repo")
+    ast_result = _make_java_ast_result()
+
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        MockClient.return_value.generate.return_value = VALID_JAVA_BLOCK
+        generate(repo, ast_result)
+
+    src_main = tmp_path / "tests_generados" / "unit" / "src" / "main" / "java" / "Calculadora.java"
+    assert src_main.exists()
+
+
+def test_generate_java_block_valid():
+    source_lines = [
+        "public class Calculadora {",
+        "    public int suma(int a, int b) {",
+        "        return a + b;",
+        "    }",
+        "}",
+    ]
+    with patch("agent.test_generator.LLMClient") as MockClient:
+        client = MockClient.return_value
+        client.generate.return_value = VALID_JAVA_BLOCK
+        result = _generate_block(client, source_lines, _make_unit("suma"), "Calculadora", "Calculadora", language="java")
+    assert not result.startswith("# ERROR")

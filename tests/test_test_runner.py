@@ -12,6 +12,7 @@ from agent.test_runner import (
     _parse_coverage,
     _parse_output,
     _parse_jest_output,
+    _parse_surefire_reports,
     run,
 )
 
@@ -411,6 +412,104 @@ def test_run_jest_no_node_prints_error(tmp_path, capsys):
 def test_run_jest_no_js_files_returns_empty(tmp_path):
     from agent.test_runner import _run_jest
     result = _run_jest(str(tmp_path))
+    assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Maven / Java (HU-14)
+# ---------------------------------------------------------------------------
+
+def test_run_maven_no_java_files_returns_empty(tmp_path):
+    from agent.test_runner import _run_maven
+    result = _run_maven(str(tmp_path))
+    assert result == {}
+
+
+def test_run_maven_no_mvn_prints_message(tmp_path, capsys):
+    java_test_dir = tmp_path / "src" / "test" / "java"
+    java_test_dir.mkdir(parents=True)
+    (java_test_dir / "CalculadoraTest.java").write_text("class CalculadoraTest {}")
+
+    with patch("agent.test_runner.shutil.which", return_value=None):
+        from agent.test_runner import _run_maven
+        result = _run_maven(str(tmp_path))
+
+    assert result == {}
+    captured = capsys.readouterr()
+    assert "Maven" in captured.out
+    assert "mvn" in captured.out
+
+
+def test_run_maven_no_mvn_message_includes_install_hint(tmp_path, capsys):
+    java_test_dir = tmp_path / "src" / "test" / "java"
+    java_test_dir.mkdir(parents=True)
+    (java_test_dir / "CalcTest.java").write_text("class CalcTest {}")
+
+    with patch("agent.test_runner.shutil.which", return_value=None):
+        from agent.test_runner import _run_maven
+        _run_maven(str(tmp_path))
+
+    captured = capsys.readouterr()
+    assert "sudo apt install maven" in captured.out or "install" in captured.out.lower()
+
+
+def _make_surefire_xml(tmp_path, classname, tests):
+    """
+    Escribe un XML de Surefire en tmp_path/target/surefire-reports/.
+    tests: lista de dict con keys: name, failure (opcional), error (opcional).
+    """
+    reports = tmp_path / "target" / "surefire-reports"
+    reports.mkdir(parents=True)
+    lines = [f'<?xml version="1.0" encoding="UTF-8"?>',
+             f'<testsuite name="{classname}" tests="{len(tests)}">']
+    for t in tests:
+        lines.append(f'  <testcase name="{t["name"]}" classname="{classname}">')
+        if "failure" in t:
+            lines.append(f'    <failure message="{t["failure"]}"/>')
+        elif "error" in t:
+            lines.append(f'    <error message="{t["error"]}"/>')
+        elif "skipped" in t:
+            lines.append('    <skipped/>')
+        lines.append('  </testcase>')
+    lines.append('</testsuite>')
+    (reports / f"TEST-{classname}.xml").write_text("\n".join(lines))
+    return reports
+
+
+def test_parse_surefire_reports_passed():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        reports = _make_surefire_xml(Path(tmpdir), "CalculadoraTest", [{"name": "testSuma"}])
+        result = _parse_surefire_reports(reports)
+    assert "CalculadoraTest::testSuma" in result
+    assert result["CalculadoraTest::testSuma"]["status"] == "passed"
+
+
+def test_parse_surefire_reports_failed():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        reports = _make_surefire_xml(
+            Path(tmpdir), "CalculadoraTest",
+            [{"name": "testDividir", "failure": "expected 2 but was 3"}]
+        )
+        result = _parse_surefire_reports(reports)
+    assert result["CalculadoraTest::testDividir"]["status"] == "failed"
+    assert "expected 2" in result["CalculadoraTest::testDividir"]["traceback"]
+
+
+def test_parse_surefire_reports_skipped():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        reports = _make_surefire_xml(
+            Path(tmpdir), "CalculadoraTest",
+            [{"name": "testPendiente", "skipped": True}]
+        )
+        result = _parse_surefire_reports(reports)
+    assert result["CalculadoraTest::testPendiente"]["status"] == "skipped"
+
+
+def test_parse_surefire_reports_empty_dir_returns_empty(tmp_path):
+    result = _parse_surefire_reports(tmp_path / "nonexistent")
     assert result == {}
 
 
