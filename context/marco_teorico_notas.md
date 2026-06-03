@@ -674,3 +674,73 @@ El script `install.sh` encapsula todo el proceso de configuración del entorno e
 ### Cobertura en reporte.md
 
 El campo `coverage_pct` se agrega como línea `**Cobertura:** 72%` y como fila en la tabla de resumen `| Cobertura | 72% |`. Si no está disponible, se muestra `N/A`. Esta representación permite que el reporte sea útil tanto cuando pytest-cov está instalado como cuando no lo está, sin romper el formato Markdown existente.
+
+---
+
+## HU-14 — Soporte Java (tests unitarios con JUnit 5)
+
+### Qué se implementó
+
+- `agent/repo_explorer.py`: se agrega `.java` a `_SUPPORTED_EXTENSIONS`. Un cambio de una línea que extiende la detección de archivos a la tercera familia de lenguajes soportada.
+- `agent/ast_extractor.py`: parser regex para Java (`_JAVA_EXTENSIONS`, `_JAVA_CLASS_DECL`, `_JAVA_METHOD`, `_JAVA_CONTROL_KEYWORDS`, `_parse_java_file`, `_extract_java_classes`, `_extract_java_methods`, `_parse_java_params`). Java no tiene funciones top-level — todo está en clases — por lo que `functions = []` siempre y solo se extraen clases y sus métodos. Los imports Java son por FQN (no rutas relativas del repo), por lo que `imports = []`.
+- `prompts/prompt_builder.py`: se agrega `JavaPromptTemplate` registrada como `"java"`. Genera `@Test void` methods sin wrapper de clase ni imports — el agente los provee. Se actualiza `clean_response()` para reconocer `@Test` como patrón de inicio de código Java y para filtrar líneas `import/package` en modo `strip_imports=True`.
+- `agent/test_generator.py`: nueva lógica Java en `generate()` vía `_generate_java_tests()`. Los tests se escriben en `tests_generados/unit/src/test/java/<ClassName>Test.java` envueltos en `class <ClassName>Test {}`. Las fuentes del repo se copian a `tests_generados/unit/src/main/java/`. Se genera un `pom.xml` mínimo con JUnit 5.10.0.
+- `agent/test_runner.py`: nueva función `_run_maven()`. Si hay archivos `*Test.java` en `src/test/java/` pero `mvn` no está instalado, imprime un mensaje claro con instrucciones de instalación y retorna `{}`. Si Maven está disponible, corre `mvn test --batch-mode` y parsea los reportes XML de Surefire en `target/surefire-reports/` con `xml.etree.ElementTree` (stdlib).
+- `examples_java/Calculadora.java` y `examples_java/Pedido.java`: ejemplos para validación del pipeline end-to-end.
+
+### Por qué regex en lugar de AST para Java
+
+El módulo `ast` de Python solo entiende Python. Para Java las opciones son:
+- `javalang`: parser Java completo para Python, pero dependencia externa.
+- `tree-sitter-java`: robusto pero requiere compilación nativa.
+- **Regex propio**: sin dependencias, mismo enfoque que JS/TS (ya probado en HU-11).
+
+Java tiene una gramática más rígida que JavaScript (siempre se requiere tipo de retorno, modificadores explícitos, braces obligatorias), lo que hace los patrones regex más predecibles. La limitación es que no maneja bien genéricos complejos en tipos de retorno anidados o código con comentarios dentro de declaraciones de método. Para el caso de uso del agente (extraer firmas para tests), cubre el 95%+ de los casos prácticos.
+
+### Estructura Maven embebida en el directorio de salida
+
+A diferencia de Python (conftest.py) y JavaScript (jest.config.js), Java requiere una estructura de proyecto completa para compilar y ejecutar tests: código fuente en `src/main/java/`, tests en `src/test/java/`, y un descriptor `pom.xml` que declare las dependencias. El agente genera esta estructura automáticamente dentro de `tests_generados/unit/`:
+
+```
+tests_generados/unit/
+├── pom.xml                       ← JUnit 5.10.0 + Surefire 3.1.2
+└── src/
+    ├── main/java/                ← copia de los .java analizados
+    └── test/java/                ← <ClassName>Test.java generados
+```
+
+Esta decisión encapsula todo lo necesario para compilar y correr los tests Java en un único directorio autocontenido, sin requerir que el usuario configure un proyecto Maven propio.
+
+### Por qué parsear XML de Surefire en lugar del stdout de Maven
+
+El stdout de Maven con `--batch-mode` tiene el formato:
+```
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0 -- in CalculadoraTest
+```
+Esto da solo el resumen por clase, no resultados individuales por test. Los XMLs de Surefire en `target/surefire-reports/TEST-<ClassName>.xml` tienen la granularidad completa: un `<testcase>` por método con `<failure>` o `<error>` si falló, incluyendo el mensaje del error. `xml.etree.ElementTree` es parte de la stdlib de Python, sin dependencias adicionales.
+
+### Mensaje de Maven no disponible — diseño deliberado
+
+Cuando `shutil.which("mvn")` devuelve `None`, el agente **no falla silenciosamente** — imprime un mensaje informativo con instrucciones de instalación y la ruta exacta del comando para correr los tests manualmente. Esta es la diferencia clave respecto al comportamiento anterior que simplemente retornaba `{}` sin explicación. El mismo patrón se aplica a Node.js (HU-11) y a pytest (HU-07).
+
+### Decisión: un TestClass.java por clase fuente (no por archivo)
+
+En Java la convención es un archivo por clase pública, pero nada impide múltiples clases no-públicas en un archivo. El agente genera un archivo `<ClassName>Test.java` por cada clase encontrada en el fuente analizado. Esto garantiza que:
+1. El nombre del archivo coincide con el nombre de la clase de test (requisito implícito del compilador Java para clases públicas).
+2. Cada clase de test es cohesiva — testea una sola clase fuente.
+3. Maven puede descubrir y compilar cada archivo de test de forma independiente.
+
+### Conceptos teóricos aplicados
+
+- **Maven como herramienta de build y test runner**: Maven gestiona el ciclo de vida del proyecto Java (compile → test → package). El plugin `maven-surefire-plugin` es el runner de tests estándar para JUnit en proyectos Maven.
+- **JUnit 5 (JUnit Jupiter)**: el framework de testing de Java moderno. `@Test` marca los métodos de test; `assertEquals`, `assertThrows`, `assertTrue` son las assertions principales. `junit-jupiter` (el artefacto unificado de Maven) incluye la API, el motor y el launcher.
+- **Surefire XML como formato de resultados**: formato estándar de JUnit-style para reportes de tests, usado por Maven, Jenkins, GitHub Actions, etc. Permite integrar los resultados del agente con cualquier herramienta de CI/CD que entienda este formato.
+- **Brace counting para Java**: el mismo mecanismo de `_find_js_end_lineno` usado en HU-11 para JS funciona para Java, dado que ambos lenguajes usan llaves para delimitar bloques.
+- **`xml.etree.ElementTree` (stdlib)**: parser XML de la stdlib de Python. Adecuado para documentos XML bien formados y de tamaño moderado como los reportes Surefire.
+
+### Deuda técnica / pendientes
+
+- El autocorrector no soporta Java (solo Python). Los tests Java fallidos quedan como `failed` sin corrección automática.
+- Los imports Java en los tests generados son fijos (`junit-jupiter`, `Assertions.*`). Si la clase bajo test requiere imports adicionales (ej. `java.util.List`), el LLM los agrega en el output y el pipeline los elimina con `strip_imports=True`. Esto puede causar `NameError` en compilación si el test necesita esos tipos.
+- Maven descarga dependencias en el primer run (~50 MB de JUnit 5 y Surefire). En entornos offline, el primer run fallará; los runs subsiguientes usan la caché local de Maven (`~/.m2/repository`).
+- No hay soporte para packages Java: los archivos generados no tienen `package` declaration, lo que funciona para clases simples pero puede causar conflictos en proyectos con estructura de paquetes.

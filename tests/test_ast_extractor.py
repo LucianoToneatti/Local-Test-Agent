@@ -265,3 +265,139 @@ def test_extract_js_function_lineno(tmp_path):
     func = result["foo.js"]["functions"][0]
     assert func["_lineno"] == 1
     assert func["_end_lineno"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Tests Java (HU-14)
+# ---------------------------------------------------------------------------
+
+def make_java_file(tmp_path, name, content):
+    f = tmp_path / name
+    f.write_text(content)
+    return str(tmp_path), [name]
+
+
+def test_extract_java_class(tmp_path):
+    code = (
+        "public class Calculadora {\n"
+        "    public int suma(int a, int b) {\n"
+        "        return a + b;\n"
+        "    }\n"
+        "}\n"
+    )
+    repo_path, files = make_java_file(tmp_path, "Calculadora.java", code)
+    result = extract(files, repo_path)
+    classes = result["Calculadora.java"]["classes"]
+    assert len(classes) == 1
+    assert classes[0]["name"] == "Calculadora"
+    assert classes[0]["type"] == "class"
+
+
+def test_extract_java_methods(tmp_path):
+    code = (
+        "public class Calculadora {\n"
+        "    public int suma(int a, int b) {\n"
+        "        return a + b;\n"
+        "    }\n"
+        "    public int resta(int a, int b) {\n"
+        "        return a - b;\n"
+        "    }\n"
+        "}\n"
+    )
+    repo_path, files = make_java_file(tmp_path, "Calculadora.java", code)
+    result = extract(files, repo_path)
+    methods = result["Calculadora.java"]["classes"][0]["methods"]
+    method_names = [m["name"] for m in methods]
+    assert "suma" in method_names
+    assert "resta" in method_names
+
+
+def test_extract_java_method_params(tmp_path):
+    code = (
+        "public class Calc {\n"
+        "    public double dividir(double dividendo, double divisor) {\n"
+        "        return dividendo / divisor;\n"
+        "    }\n"
+        "}\n"
+    )
+    repo_path, files = make_java_file(tmp_path, "Calc.java", code)
+    result = extract(files, repo_path)
+    methods = result["Calc.java"]["classes"][0]["methods"]
+    dividir = next(m for m in methods if m["name"] == "dividir")
+    assert "dividendo" in dividir["params"]
+    assert "divisor" in dividir["params"]
+
+
+def test_extract_java_no_top_level_functions(tmp_path):
+    code = (
+        "public class Foo {\n"
+        "    public void bar() {\n"
+        "        System.out.println(\"hello\");\n"
+        "    }\n"
+        "}\n"
+    )
+    repo_path, files = make_java_file(tmp_path, "Foo.java", code)
+    result = extract(files, repo_path)
+    assert result["Foo.java"]["functions"] == []
+
+
+def test_extract_java_no_imports_tracked(tmp_path):
+    code = (
+        "import java.util.List;\n"
+        "public class Foo {\n"
+        "    public void bar() {}\n"
+        "}\n"
+    )
+    repo_path, files = make_java_file(tmp_path, "Foo.java", code)
+    result = extract(files, repo_path)
+    assert result["Foo.java"]["imports"] == []
+
+
+def test_extract_java_empty_class(tmp_path):
+    code = "public class Empty {\n}\n"
+    repo_path, files = make_java_file(tmp_path, "Empty.java", code)
+    result = extract(files, repo_path)
+    classes = result["Empty.java"]["classes"]
+    assert len(classes) == 1
+    assert classes[0]["methods"] == []
+
+
+def test_extract_java_read_error(tmp_path):
+    repo_path = str(tmp_path)
+    result = extract(["NonExistent.java"], repo_path)
+    assert "parse_error" in result["NonExistent.java"]
+
+
+def test_extract_java_static_method(tmp_path):
+    code = (
+        "public class Utils {\n"
+        "    public static String mayusculas(String texto) {\n"
+        "        return texto.toUpperCase();\n"
+        "    }\n"
+        "}\n"
+    )
+    repo_path, files = make_java_file(tmp_path, "Utils.java", code)
+    result = extract(files, repo_path)
+    methods = result["Utils.java"]["classes"][0]["methods"]
+    assert any(m["name"] == "mayusculas" for m in methods)
+
+
+def test_extract_java_examples(tmp_path):
+    code = (
+        "public class Calculadora {\n"
+        "    public int suma(int a, int b) { return a + b; }\n"
+        "    public int resta(int a, int b) { return a - b; }\n"
+        "    public double dividir(double dividendo, double divisor) {\n"
+        "        if (divisor == 0) throw new IllegalArgumentException(\"cero\");\n"
+        "        return dividendo / divisor;\n"
+        "    }\n"
+        "}\n"
+    )
+    repo_path, files = make_java_file(tmp_path, "Calculadora.java", code)
+    result = extract(files, repo_path)
+    classes = result["Calculadora.java"]["classes"]
+    assert len(classes) == 1
+    method_names = [m["name"] for m in classes[0]["methods"]]
+    assert "suma" in method_names
+    assert "resta" in method_names
+    assert "dividir" in method_names

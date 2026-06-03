@@ -1,14 +1,16 @@
 """
-Generador de tests unitarios para repositorios Python y JavaScript/TypeScript.
+Generador de tests unitarios para repositorios Python, JavaScript/TypeScript y Java.
 
 Para Python genera archivos pytest en tests_generados/unit/test_<stem>.py.
 Para JS/TS genera archivos Jest en tests_generados/unit/<stem>.test.js.
+Para Java genera archivos JUnit 5 en tests_generados/unit/src/test/java/<Class>Test.java.
 
 Llama al LLM una vez por función/método, valida el output y reintenta
 una vez si el código generado no es válido.
 """
 
 import ast
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -16,12 +18,18 @@ from agent.llm_client import LLMClient
 from prompts.prompt_builder import PromptBuilder, clean_response
 
 OUTPUT_DIR = Path("tests_generados/unit")
+_JAVA_TEST_DIR = OUTPUT_DIR / "src" / "test" / "java"
+_JAVA_MAIN_DIR = OUTPUT_DIR / "src" / "main" / "java"
 
 _JS_EXTENSIONS = {'.js', '.ts'}
+_JAVA_EXTENSIONS = {'.java'}
 
 
 def _detect_language(rel_path: str) -> str:
-    return "javascript" if Path(rel_path).suffix in _JS_EXTENSIONS else "python"
+    suffix = Path(rel_path).suffix
+    if suffix in _JAVA_EXTENSIONS:
+        return "java"
+    return "javascript" if suffix in _JS_EXTENSIONS else "python"
 
 
 def generate(repo_path: str, ast_result: dict, progress_callback=None) -> None:
@@ -40,27 +48,33 @@ def generate(repo_path: str, ast_result: dict, progress_callback=None) -> None:
     repo = Path(repo_path).expanduser().resolve()
     has_python = False
     has_js = False
+    has_java = False
 
     files = list(ast_result.items())
     total = len(files)
 
     for idx, (rel_path, file_info) in enumerate(files, 1):
         language = _detect_language(rel_path)
-        if language == "python":
-            has_python = True
-        else:
-            has_js = True
 
-        blocks = _generate_blocks_for_file(client, repo, rel_path, file_info, language)
-        if blocks:
-            module_name = Path(rel_path).stem
-            if language == "javascript":
-                header = _build_js_import_header(module_name, file_info)
-                out_file = OUTPUT_DIR / f"{module_name}.test.js"
+        if language == "java":
+            has_java = True
+            _generate_java_tests(client, repo, rel_path, file_info)
+        else:
+            if language == "python":
+                has_python = True
             else:
-                header = _build_import_header(module_name, file_info)
-                out_file = OUTPUT_DIR / f"test_{module_name}.py"
-            out_file.write_text(header + "\n\n" + "\n\n".join(blocks) + "\n")
+                has_js = True
+
+            blocks = _generate_blocks_for_file(client, repo, rel_path, file_info, language)
+            if blocks:
+                module_name = Path(rel_path).stem
+                if language == "javascript":
+                    header = _build_js_import_header(module_name, file_info)
+                    out_file = OUTPUT_DIR / f"{module_name}.test.js"
+                else:
+                    header = _build_import_header(module_name, file_info)
+                    out_file = OUTPUT_DIR / f"test_{module_name}.py"
+                out_file.write_text(header + "\n\n" + "\n\n".join(blocks) + "\n")
 
         if progress_callback:
             progress_callback(idx, total, Path(rel_path).name)
@@ -69,6 +83,9 @@ def generate(repo_path: str, ast_result: dict, progress_callback=None) -> None:
         _write_conftest(repo)
     if has_js:
         _write_jest_config(repo)
+    if has_java:
+        _copy_java_sources(repo)
+        _write_java_pom()
 
 
 def _build_import_header(module_name: str, file_info: dict) -> str:
@@ -194,6 +211,9 @@ def _generate_block(
         if language == "javascript":
             if "test(" in code or "describe(" in code or "it(" in code:
                 return code
+        elif language == "java":
+            if "@Test" in code or "void test" in code.lower():
+                return code
         else:
             try:
                 ast.parse(code)
@@ -221,6 +241,103 @@ def _read_source_lines(repo: Path, rel_path: str) -> Optional[list[str]]:
         return (repo / rel_path).read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
+
+
+def _generate_java_tests(client: LLMClient, repo: Path, rel_path: str, file_info: dict) -> None:
+    """Genera un archivo <ClassName>Test.java por cada clase en el archivo fuente."""
+    source_lines = _read_source_lines(repo, rel_path)
+    if source_lines is None:
+        return
+
+    _JAVA_TEST_DIR.mkdir(parents=True, exist_ok=True)
+
+    for cls in file_info.get("classes", []):
+        class_name = cls["name"]
+        blocks = []
+        for method in cls.get("methods", []):
+            block = _generate_block(
+                client=client,
+                source_lines=source_lines,
+                unit=method,
+                module_name=class_name,
+                class_name=class_name,
+                language="java",
+            )
+            blocks.append(block)
+
+        if blocks:
+            out_file = _JAVA_TEST_DIR / f"{class_name}Test.java"
+            out_file.write_text(_build_java_test_file(class_name, blocks))
+
+
+def _build_java_test_file(class_name: str, blocks: list[str]) -> str:
+    """Arma el archivo Java completo con imports JUnit 5 y wrapper de clase."""
+    header = (
+        "import org.junit.jupiter.api.Test;\n"
+        "import static org.junit.jupiter.api.Assertions.*;\n"
+        "\n"
+        f"class {class_name}Test {{\n"
+    )
+    indented_blocks = []
+    for block in blocks:
+        indented = "\n".join(
+            "    " + line if line.strip() else line
+            for line in block.splitlines()
+        )
+        indented_blocks.append(indented)
+    body = "\n\n".join(indented_blocks)
+    return header + "\n" + body + "\n}\n"
+
+
+def _copy_java_sources(repo: Path) -> None:
+    """Copia los .java del repo a src/main/java/ para que Maven pueda compilarlos."""
+    _JAVA_MAIN_DIR.mkdir(parents=True, exist_ok=True)
+    for java_file in repo.rglob("*.java"):
+        dest = _JAVA_MAIN_DIR / java_file.name
+        shutil.copy2(java_file, dest)
+
+
+def _write_java_pom() -> None:
+    """Escribe un pom.xml mínimo con JUnit 5 en el directorio de tests generados."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    pom_path = OUTPUT_DIR / "pom.xml"
+    if pom_path.exists():
+        return
+    pom_content = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<project xmlns="http://maven.apache.org/POM/4.0.0"\n'
+        '         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"\n'
+        '         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 '
+        'http://maven.apache.org/xsd/maven-4.0.0.xsd">\n'
+        '    <modelVersion>4.0.0</modelVersion>\n'
+        '    <groupId>local.test.agent</groupId>\n'
+        '    <artifactId>generated-tests</artifactId>\n'
+        '    <version>1.0-SNAPSHOT</version>\n'
+        '    <properties>\n'
+        '        <maven.compiler.source>11</maven.compiler.source>\n'
+        '        <maven.compiler.target>11</maven.compiler.target>\n'
+        '        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>\n'
+        '    </properties>\n'
+        '    <dependencies>\n'
+        '        <dependency>\n'
+        '            <groupId>org.junit.jupiter</groupId>\n'
+        '            <artifactId>junit-jupiter</artifactId>\n'
+        '            <version>5.10.0</version>\n'
+        '            <scope>test</scope>\n'
+        '        </dependency>\n'
+        '    </dependencies>\n'
+        '    <build>\n'
+        '        <plugins>\n'
+        '            <plugin>\n'
+        '                <groupId>org.apache.maven.plugins</groupId>\n'
+        '                <artifactId>maven-surefire-plugin</artifactId>\n'
+        '                <version>3.1.2</version>\n'
+        '            </plugin>\n'
+        '        </plugins>\n'
+        '    </build>\n'
+        '</project>\n'
+    )
+    pom_path.write_text(pom_content)
 
 
 def _write_conftest(repo: Path) -> None:

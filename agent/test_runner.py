@@ -1,15 +1,14 @@
 """
-Runner de tests para Python (pytest) y JavaScript/TypeScript (Jest).
+Runner de tests para Python (pytest), JavaScript/TypeScript (Jest) y Java (Maven).
 
 Detecta automaticamente que tipos de tests hay en el directorio y ejecuta
-pytest y/o Jest segun corresponda. Los resultados se combinan en el mismo
+pytest, Jest y/o Maven segun corresponda. Los resultados se combinan en el mismo
 formato {test_id: {status, traceback}}.
 
 Prerequisitos:
 - Python: pytest instalado en el entorno activo.
-- JavaScript: Node.js y Jest instalados. El agente asume que los
-  desarrolladores JS ya tienen estas herramientas — son parte de su
-  entorno habitual, igual que Python/pytest lo son para Python.
+- JavaScript: Node.js y Jest instalados.
+- Java: Maven (mvn) instalado. Si no está disponible, el agente lo indica claramente.
 """
 
 import importlib.util
@@ -18,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -37,7 +37,8 @@ def run(tests_dir: str, repo_path: str = "") -> tuple[dict, float | None]:
     """
     py_results, coverage_pct = _run_pytest(tests_dir, repo_path)
     js_results = _run_jest(tests_dir)
-    return {**py_results, **js_results}, coverage_pct
+    java_results = _run_maven(tests_dir)
+    return {**py_results, **js_results, **java_results}, coverage_pct
 
 
 def _run_pytest(tests_dir: str, repo_path: str = "") -> tuple[dict, float | None]:
@@ -122,6 +123,82 @@ def _run_jest(tests_dir: str) -> dict:
             cwd=str(cwd),
         )
         results.update(_parse_jest_output(result.stdout))
+
+    return results
+
+
+def _run_maven(tests_dir: str) -> dict:
+    """
+    Ejecuta mvn test sobre el proyecto Maven en tests_dir si hay tests Java.
+
+    Busca archivos *Test.java en src/test/java/. Si Maven no está instalado,
+    muestra un mensaje claro y retorna {}. Parsea los reportes XML de Surefire
+    para obtener resultados individuales por test.
+    """
+    tests_path = Path(tests_dir).resolve()
+    java_test_dir = tests_path / "src" / "test" / "java"
+
+    java_files = list(java_test_dir.rglob("*Test.java")) if java_test_dir.exists() else []
+    if not java_files:
+        return {}
+
+    if not shutil.which("mvn"):
+        print("[INFO] Maven (mvn) no está instalado.")
+        print("    Los tests Java fueron generados pero no se pueden ejecutar.")
+        print("    Para instalar Maven:")
+        print("    sudo apt install maven")
+        print("    Una vez instalado, ejecutá:")
+        print(f"    cd {tests_path} && mvn test")
+        return {}
+
+    pom_path = tests_path / "pom.xml"
+    if not pom_path.exists():
+        print(f"[ERROR] pom.xml no encontrado en {tests_path}. Regenerá los tests.")
+        return {}
+
+    subprocess.run(
+        ["mvn", "test", "--batch-mode"],
+        capture_output=True,
+        text=True,
+        cwd=str(tests_path),
+    )
+
+    return _parse_surefire_reports(tests_path / "target" / "surefire-reports")
+
+
+def _parse_surefire_reports(reports_dir: Path) -> dict:
+    """Parsea los XMLs de Surefire y devuelve {test_id: {status, traceback}}."""
+    results = {}
+    if not reports_dir.exists():
+        return results
+
+    for xml_file in reports_dir.glob("TEST-*.xml"):
+        try:
+            tree = ET.parse(xml_file)
+            root = tree.getroot()
+            suite_name = root.get("name", xml_file.stem)
+            for testcase in root.findall("testcase"):
+                method_name = testcase.get("name", "unknown")
+                test_id = f"{suite_name}::{method_name}"
+                failure = testcase.find("failure")
+                error = testcase.find("error")
+                skipped = testcase.find("skipped")
+                if skipped is not None:
+                    results[test_id] = {"status": "skipped", "traceback": None}
+                elif failure is not None:
+                    results[test_id] = {
+                        "status": "failed",
+                        "traceback": failure.get("message", failure.text or ""),
+                    }
+                elif error is not None:
+                    results[test_id] = {
+                        "status": "error",
+                        "traceback": error.get("message", error.text or ""),
+                    }
+                else:
+                    results[test_id] = {"status": "passed", "traceback": None}
+        except ET.ParseError:
+            pass
 
     return results
 

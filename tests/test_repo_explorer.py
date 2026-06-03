@@ -78,8 +78,24 @@ def test_explore_ignores_non_supported_extensions(tmp_path):
     (tmp_path / "style.css").write_text("body {}")
     (tmp_path / "data.json").write_text("{}")
     result = explore(str(tmp_path))
-    assert all(p.endswith((".py", ".js", ".ts")) for p in result)
+    assert all(p.endswith((".py", ".js", ".ts", ".java")) for p in result)
     assert len(result) == 1  # solo script.py
+
+
+def test_explore_finds_java_files(tmp_path):
+    (tmp_path / "Calculadora.java").write_text("public class Calculadora {}")
+    result = explore(str(tmp_path))
+    assert "Calculadora.java" in result
+
+
+def test_explore_java_mixed_with_other_languages(tmp_path):
+    (tmp_path / "Calculadora.java").write_text("public class Calculadora {}")
+    (tmp_path / "utils.py").write_text("def helper(): pass")
+    (tmp_path / "app.js").write_text("function run() {}")
+    result = explore(str(tmp_path))
+    assert "Calculadora.java" in result
+    assert "utils.py" in result
+    assert "app.js" in result
 
 
 def test_explore_js_result_is_sorted(tmp_path):

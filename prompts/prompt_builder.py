@@ -186,6 +186,63 @@ class JsPromptTemplate(PromptTemplate):
         return BuiltPrompt(system=self._SYSTEM, user=user)
 
 
+class JavaPromptTemplate(PromptTemplate):
+    """
+    Template para generar tests JUnit 5 a partir de código Java.
+
+    Instrucciones clave del system prompt:
+    - Rol exclusivo: escritor de tests JUnit 5, no explicador de código.
+    - Formato de salida: solo métodos @Test, sin clase envolvente, sin imports,
+      sin bloques markdown, sin texto adicional.
+    - Framework obligatorio: JUnit 5 (org.junit.jupiter.api).
+    - Cobertura mínima: caso feliz, casos borde y caso de error esperado.
+    - El agente provee el wrapper de clase y los imports.
+    """
+
+    language = "java"
+
+    _SYSTEM = (
+        "You are a Java test-writing machine. "
+        "You output ONLY raw Java test method code. Nothing else.\n"
+        "ABSOLUTE RULES — never break these:\n"
+        "- NO markdown. Never use triple backticks (```) under any circumstances.\n"
+        "- NO explanations, NO introductory sentences, NO comments outside the code.\n"
+        "- Do NOT output a class declaration. Output ONLY @Test methods.\n"
+        "- Do NOT include any import statements.\n"
+        "- Do NOT include any package declarations.\n"
+        "- Use JUnit 5: @Test annotation, assertEquals, assertThrows, assertTrue, etc.\n"
+        "- Cover: happy path, edge case, and expected exception (use assertThrows).\n"
+        "- Name tests as: testMethodName_scenario (camelCase).\n"
+        "- Each method must be: @Test\\nvoid testName() { ... }"
+    )
+
+    _USER_TEMPLATE = (
+        "Write JUnit 5 test methods for this Java method:\n\n"
+        "{code}\n\n"
+        "Method under test: {function_name} (in class {class_name})\n"
+        "Instantiate the class with: {class_name} obj = new {class_name}();\n\n"
+        "OUTPUT RULES: output ONLY @Test void methods. "
+        "No class declaration, no imports, no package, no markdown, no backticks. "
+        "Start your response directly with '@Test'."
+    )
+
+    def build(
+        self,
+        code: str,
+        function_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+        class_name: Optional[str] = None,
+    ) -> BuiltPrompt:
+        resolved_name = function_name or "metodo"
+        resolved_class = class_name or module_name or "MiClase"
+        user = self._USER_TEMPLATE.format(
+            code=code.strip(),
+            function_name=resolved_name,
+            class_name=resolved_class,
+        )
+        return BuiltPrompt(system=self._SYSTEM, user=user)
+
+
 class IntegrationPromptTemplate(PromptTemplate):
     """
     Template para generar tests de integración entre pares de módulos Python.
@@ -367,6 +424,7 @@ class CorrectionPromptTemplate(PromptTemplate):
 _REGISTRY: dict[str, PromptTemplate] = {
     "python": PythonPromptTemplate(),
     "javascript": JsPromptTemplate(),
+    "java": JavaPromptTemplate(),
     "python_integration": IntegrationPromptTemplate(),
     "javascript_integration": JsIntegrationPromptTemplate(),
     "python_correction": CorrectionPromptTemplate(),
@@ -420,6 +478,8 @@ def clean_response(response: str, *, strip_imports: bool = False, language: str 
     # Paso 2: descartar texto explicativo antes del código
     if language == "javascript":
         match = re.search(r"^(test\s*\(|describe\s*\(|it\s*\()", response, re.MULTILINE)
+    elif language == "java":
+        match = re.search(r"^(@Test|void\s+test)", response, re.MULTILINE)
     else:
         match = re.search(r"^(import |from |def test_)", response, re.MULTILINE)
     if match:
@@ -428,12 +488,17 @@ def clean_response(response: str, *, strip_imports: bool = False, language: str 
     # Paso 3: eliminar backticks sueltos
     response = response.replace("`", "")
 
-    # Paso 4: eliminar líneas de import si el agente provee el header
+    # Paso 4: eliminar líneas de import/package si el agente provee el header
     if strip_imports:
         if language == "javascript":
             response = "\n".join(
                 line for line in response.splitlines()
                 if not _is_js_import_line(line)
+            )
+        elif language == "java":
+            response = "\n".join(
+                line for line in response.splitlines()
+                if not line.lstrip().startswith(("import ", "package "))
             )
         else:
             response = "\n".join(
