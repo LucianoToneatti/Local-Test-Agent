@@ -24,7 +24,7 @@ def _detect_language(rel_path: str) -> str:
     return "javascript" if Path(rel_path).suffix in _JS_EXTENSIONS else "python"
 
 
-def generate(repo_path: str, ast_result: dict) -> None:
+def generate(repo_path: str, ast_result: dict, progress_callback=None) -> None:
     """
     Genera tests unitarios para todas las funciones y métodos del ast_result.
 
@@ -32,6 +32,8 @@ def generate(repo_path: str, ast_result: dict) -> None:
         repo_path: Ruta al repositorio analizado (absoluta o relativa al cwd).
         ast_result: Dict producido por ast_extractor.extract().
                     Estructura: {rel_path: {functions, classes, imports}}
+        progress_callback: Callable opcional con firma (current, total, label).
+                           Se llama despues de procesar cada archivo.
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     client = LLMClient()
@@ -39,7 +41,10 @@ def generate(repo_path: str, ast_result: dict) -> None:
     has_python = False
     has_js = False
 
-    for rel_path, file_info in ast_result.items():
+    files = list(ast_result.items())
+    total = len(files)
+
+    for idx, (rel_path, file_info) in enumerate(files, 1):
         language = _detect_language(rel_path)
         if language == "python":
             has_python = True
@@ -56,6 +61,9 @@ def generate(repo_path: str, ast_result: dict) -> None:
                 header = _build_import_header(module_name, file_info)
                 out_file = OUTPUT_DIR / f"test_{module_name}.py"
             out_file.write_text(header + "\n\n" + "\n\n".join(blocks) + "\n")
+
+        if progress_callback:
+            progress_callback(idx, total, Path(rel_path).name)
 
     if has_python:
         _write_conftest(repo)

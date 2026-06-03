@@ -31,7 +31,7 @@ def _make_mocks(tmp_path):
         "extract": patch("agent_main.extract", return_value={}),
         "generate_unit": patch("agent_main.generate_unit"),
         "generate_integration": patch("agent_main.generate_integration"),
-        "run_tests": patch("agent_main.run_tests", return_value={}),
+        "run_tests": patch("agent_main.run_tests", return_value=({}, None)),
         "report_generate": patch("agent_main.report_generator"),
     }
 

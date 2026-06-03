@@ -639,3 +639,38 @@ El rendimiento del agente depende directamente del hardware disponible:
 - **Sin GPU dedicada**: ~27 minutos para los mismos 4 archivos — funcional, pero lento para repositorios grandes o demostraciones en vivo.
 
 Para la presentación del TIF, ejecutar el agente en una máquina con GPU o preparar una corrida previa grabada.
+
+---
+
+## HU-13: Terminal UX con colores ANSI, barra de progreso y coverage
+
+### Problema que resuelve
+
+El agente original imprimía mensajes `[*]` y `[OK]` planos sin diferenciación visual. No había retroalimentación del progreso durante la generación de tests (que puede tomar minutos) ni indicación del estado de cada test al ejecutarse. Tampoco se medía la cobertura de código generada por los tests.
+
+### Decisiones de diseño
+
+**Solo ANSI y ASCII — sin librerías externas**: la restricción de no agregar dependencias para la UI es intencional. `colorama`, `rich`, `tqdm` etc. resuelven el mismo problema pero agregan peso al entorno. Los códigos ANSI (`\033[32m` para verde, `\033[31m` para rojo) son soportados nativamente por cualquier terminal Linux/macOS moderna. `terminal_ui.py` es completamente importable sin pip.
+
+**Módulo separado `agent/terminal_ui.py`**: toda la lógica de presentación está aislada en un módulo. `agent.py` no conoce códigos ANSI ni anchos de barra — llama a `print_step()`, `print_progress()`, `print_result_line()`. Esto hace que la lógica sea testeable (se puede capturar stdout con `capsys`) y reemplazable (cambiar colores o formato no toca el flujo de negocio).
+
+**Barra de progreso con `\r`**: la barra usa retorno de carro (`\r`) para sobreescribir la línea actual en lugar de imprimir una nueva línea por iteración. Esto requiere `flush=True` en el `print()` para que el buffer se vacíe antes de que el LLM tarde en responder. El `print()` sin argumentos al finalizar (cuando `current >= total`) emite el `\n` que avanza a la línea siguiente.
+
+**`progress_callback` como parámetro opcional**: `test_generator.generate()` e `integration_generator.generate()` reciben `progress_callback=None`. Si es `None`, el comportamiento es idéntico al anterior — ningún código existente se rompe. El callback tiene la firma `(current: int, total: int, label: str)`, que coincide exactamente con `terminal_ui.print_progress`. En `agent.py` simplemente se pasa `progress_callback=terminal_ui.print_progress`.
+
+**`run()` retorna `(dict, float | None)`**: cambio de firma en `test_runner.run()`. La alternativa sería retornar un dict con el coverage embebido en una clave especial, pero eso mezcla metadatos del run con resultados de tests individuales. Una tupla es más limpia: el primer elemento son los resultados, el segundo es el coverage. El tipo `float | None` (no un dict con clave "coverage") hace explícito que el coverage es un valor escalar o ausente.
+
+**Coverage solo para Python con pytest-cov**: se agrega `--cov={repo_path} --cov-report=term-missing` al comando de pytest cuando `pytest_cov` está instalado y `repo_path` es no vacío. Si `pytest-cov` no está instalado, el flag se omite silenciosamente y el coverage queda como `None`. Jest tiene su propio mecanismo de coverage (`--coverage`) pero se lo pasa `--no-coverage` explícitamente para no mezclar reportes: el porcentaje en el reporte es solo de Python.
+
+**Regex de coverage con backtracking**: la línea `TOTAL   25   7   72%` se parsea con `r"^TOTAL(?:\s+\d+)+\s+(\d+)%"`. El grupo `(?:\s+\d+)+` consume todos los números menos el último (backtracking), y `\s+(\d+)%` captura el porcentaje final. Funciona también con la forma branch de pytest-cov (`TOTAL   25   7   10   3   72%`).
+
+### install.sh como punto de entrada
+
+El script `install.sh` encapsula todo el proceso de configuración del entorno en un solo comando. La razón de crearlo como script bash (en lugar de un `Makefile` o `pyproject.toml`) es que:
+1. No requiere ninguna herramienta preinstalada más allá de `bash` y `python3`
+2. Incluye lógica de verificación de Ollama (que es un binario externo, no un paquete pip)
+3. Es inmediatamente ejecutable por un usuario nuevo sin leer la documentación completa
+
+### Cobertura en reporte.md
+
+El campo `coverage_pct` se agrega como línea `**Cobertura:** 72%` y como fila en la tabla de resumen `| Cobertura | 72% |`. Si no está disponible, se muestra `N/A`. Esta representación permite que el reporte sea útil tanto cuando pytest-cov está instalado como cuando no lo está, sin romper el formato Markdown existente.

@@ -1,8 +1,8 @@
 """
 Runner de tests para Python (pytest) y JavaScript/TypeScript (Jest).
 
-Detecta automáticamente qué tipos de tests hay en el directorio y ejecuta
-pytest y/o Jest según corresponda. Los resultados se combinan en el mismo
+Detecta automaticamente que tipos de tests hay en el directorio y ejecuta
+pytest y/o Jest segun corresponda. Los resultados se combinan en el mismo
 formato {test_id: {status, traceback}}.
 
 Prerequisitos:
@@ -21,40 +21,64 @@ import sys
 from pathlib import Path
 
 
-def run(tests_dir: str) -> dict:
+def run(tests_dir: str, repo_path: str = "") -> tuple[dict, float | None]:
     """
-    Ejecuta pytest y/o Jest sobre tests_dir y devuelve resultados por test_id.
+    Ejecuta pytest y/o Jest sobre tests_dir y devuelve resultados y cobertura.
 
     Args:
         tests_dir: Ruta al directorio con los tests generados.
+        repo_path: Ruta al repositorio analizado. Si se provee y pytest-cov
+                   esta instalado, se agrega --cov al comando de pytest.
 
     Returns:
-        Dict con formato {test_id: {'status': str, 'traceback': str|None}}.
-        'status' es 'passed', 'failed' o 'error'.
+        Tupla (results, coverage_pct) donde results es un dict con formato
+        {test_id: {'status': str, 'traceback': str|None}} y coverage_pct es
+        el porcentaje de cobertura como float, o None si no esta disponible.
     """
-    py_results = _run_pytest(tests_dir)
+    py_results, coverage_pct = _run_pytest(tests_dir, repo_path)
     js_results = _run_jest(tests_dir)
-    return {**py_results, **js_results}
+    return {**py_results, **js_results}, coverage_pct
 
 
-def _run_pytest(tests_dir: str) -> dict:
-    """Ejecuta pytest -v sobre tests_dir y devuelve resultados parseados."""
+def _run_pytest(tests_dir: str, repo_path: str = "") -> tuple[dict, float | None]:
+    """Ejecuta pytest -v sobre tests_dir y devuelve (resultados, cobertura)."""
     if importlib.util.find_spec("pytest") is None:
-        print("[ERROR] pytest no está instalado. Ejecutá: pip install pytest")
-        return {}
+        print("[ERROR] pytest no esta instalado. Ejecuta: pip install pytest")
+        return {}, None
 
     tests_path = Path(tests_dir)
     if not tests_path.exists():
         print(f"[ERROR] El directorio de tests no existe: {tests_dir}")
-        return {}
+        return {}, None
 
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-v", "--continue-on-collection-errors", str(tests_path)],
-        capture_output=True,
-        text=True,
-    )
+    cmd = [
+        sys.executable, "-m", "pytest", "-v",
+        "--continue-on-collection-errors",
+        str(tests_path),
+    ]
 
-    return _parse_output(result.stdout + result.stderr)
+    has_cov = importlib.util.find_spec("pytest_cov") is not None
+    if repo_path and has_cov:
+        cmd += [f"--cov={repo_path}", "--cov-report=term-missing"]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    output = result.stdout + result.stderr
+    coverage_pct = _parse_coverage(output) if (repo_path and has_cov) else None
+    return _parse_output(output), coverage_pct
+
+
+def _parse_coverage(output: str) -> float | None:
+    """
+    Extrae el porcentaje total de cobertura del output de pytest-cov.
+
+    pytest-cov imprime una linea al final del estilo:
+      TOTAL   120   30   75%
+    """
+    match = re.search(r"^TOTAL(?:\s+\d+)+\s+(\d+)%", output, re.MULTILINE)
+    if match:
+        return float(match.group(1))
+    return None
 
 
 def _run_jest(tests_dir: str) -> dict:
@@ -73,11 +97,11 @@ def _run_jest(tests_dir: str) -> dict:
         return {}
 
     if not shutil.which("node"):
-        print("[ERROR] Node.js no está instalado. Jest requiere Node.js para ejecutar tests JavaScript.")
-        print("    Instalá Node.js desde https://nodejs.org")
+        print("[ERROR] Node.js no esta instalado. Jest requiere Node.js para ejecutar tests JavaScript.")
+        print("    Instala Node.js desde https://nodejs.org")
         return {}
 
-    # Recolectar los directorios con jest.config.js, en orden de aparición
+    # Recolectar los directorios con jest.config.js, en orden de aparicion
     config_dirs: list[Path] = []
     seen: set[Path] = set()
     for f in js_files:
@@ -143,14 +167,14 @@ def _parse_output(output: str) -> dict:
     """
     Parsea el stdout de pytest -v y extrae resultados por test_id.
 
-    El formato de una línea de resultado en pytest -v es:
+    El formato de una linea de resultado en pytest -v es:
       path/test_file.py::test_nombre STATUS
     donde STATUS es PASSED, FAILED o ERROR.
 
-    También captura collection errors (ImportError, ModuleNotFoundError al
-    importar el módulo de test), que pytest reporta como:
+    Tambien captura collection errors (ImportError, ModuleNotFoundError al
+    importar el modulo de test), que pytest reporta como:
       ERROR path/test_file.py
-    sin ::nombre de función. Estos se registran con el path del archivo como key.
+    sin ::nombre de funcion. Estos se registran con el path del archivo como key.
     """
     results = {}
 
@@ -178,7 +202,7 @@ def _parse_output(output: str) -> dict:
 
 def _attach_collection_tracebacks(output: str, results: dict) -> None:
     """
-    Captura bloques de error de colección (ERROR collecting path/file.py)
+    Captura bloques de error de coleccion (ERROR collecting path/file.py)
     y los adjunta al test_id correspondiente (ruta del archivo, sin ::nombre).
     """
     block_re = re.compile(
@@ -197,12 +221,12 @@ def _attach_tracebacks(output: str, results: dict) -> None:
     Busca los bloques de traceback en el output de pytest y los asigna
     al test_id correspondiente en el dict results (modifica in-place).
 
-    pytest -v genera bloques con el patrón:
+    pytest -v genera bloques con el patron:
       _________________________ test_nombre _________________________
       ...traceback...
       ========================= short test summary ===================
     """
-    # Captura: header _____func_____ seguido del cuerpo hasta el próximo separador
+    # Captura: header _____func_____ seguido del cuerpo hasta el proximo separador
     block_re = re.compile(
         r"_{5,}\s+(\w+)\s+_{5,}\n(.*?)(?=_{5,}|={5,}|\Z)",
         re.DOTALL,

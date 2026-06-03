@@ -25,7 +25,7 @@ _JS_TEMPLATE = JsIntegrationPromptTemplate()
 _JS_EXTENSIONS = {".js", ".ts", ".mjs"}
 
 
-def generate(repo_path: str, ast_result: dict) -> None:
+def generate(repo_path: str, ast_result: dict, progress_callback=None) -> None:
     """
     Genera tests de integración para todos los pares de módulos relacionados.
 
@@ -33,27 +33,40 @@ def generate(repo_path: str, ast_result: dict) -> None:
         repo_path: Ruta al repositorio analizado (absoluta o relativa al cwd).
         ast_result: Dict producido por ast_extractor.extract().
                     Estructura: {rel_path: {functions, classes, imports}}
+        progress_callback: Callable opcional con firma (current, total, label).
+                           Se llama despues de procesar cada par de modulos.
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     client = LLMClient()
     repo = Path(repo_path).expanduser().resolve()
 
     pairs = _find_pairs(ast_result)
+    js_pairs = _find_js_pairs(ast_result)
+    total = len(pairs) + len(js_pairs)
+    idx = 0
+
     for (a_path, b_path) in pairs:
+        idx += 1
         code = _generate_pair_test(client, repo, a_path, b_path, ast_result)
         stem_a = Path(a_path).stem
         stem_b = Path(b_path).stem
         out_file = OUTPUT_DIR / f"test_{stem_a}_{stem_b}.py"
         out_file.write_text(code + "\n")
+        if progress_callback:
+            progress_callback(idx, total, f"{stem_a}+{stem_b}")
+
     _write_conftest(repo)
 
-    js_pairs = _find_js_pairs(ast_result)
     for (a_path, b_path) in js_pairs:
+        idx += 1
         code = _generate_js_pair_test(client, repo, a_path, b_path, ast_result)
         stem_a = Path(a_path).stem
         stem_b = Path(b_path).stem
         out_file = OUTPUT_DIR / f"{stem_a}_{stem_b}.test.js"
         out_file.write_text(code + "\n")
+        if progress_callback:
+            progress_callback(idx, total, f"{stem_a}+{stem_b}")
+
     if js_pairs:
         _write_js_jest_config(repo)
 

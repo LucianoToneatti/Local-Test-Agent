@@ -9,6 +9,7 @@ import pytest
 from agent.test_runner import (
     _attach_collection_tracebacks,
     _attach_tracebacks,
+    _parse_coverage,
     _parse_output,
     _parse_jest_output,
     run,
@@ -36,8 +37,9 @@ def test_run_pytest_not_installed(capsys, monkeypatch):
     # una ruta inexistente es suficiente para aislar el check de pytest sin
     # que _run_jest encuentre archivos .test.js reales.
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
-    result = run("nonexistent_dir_xyz_abc")
-    assert result == {}
+    results, cov = run("nonexistent_dir_xyz_abc")
+    assert results == {}
+    assert cov is None
     captured = capsys.readouterr()
     assert "pip install pytest" in captured.out
 
@@ -48,8 +50,9 @@ def test_run_pytest_not_installed(capsys, monkeypatch):
 
 def test_run_directory_not_found(capsys, monkeypatch):
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
-    result = run("nonexistent_dir_xyz_abc")
-    assert result == {}
+    results, cov = run("nonexistent_dir_xyz_abc")
+    assert results == {}
+    assert cov is None
     captured = capsys.readouterr()
     assert "no existe" in captured.out
 
@@ -131,8 +134,8 @@ def test_run_returns_passed_dict(tmp_path, monkeypatch):
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
     stdout = "tests_generados/unit/test_calc.py::test_suma PASSED\n"
     with patch("agent.test_runner.subprocess.run", return_value=_make_subprocess_result(stdout=stdout)):
-        result = run(str(tmp_path))
-    assert result == {
+        results, cov = run(str(tmp_path))
+    assert results == {
         "tests_generados/unit/test_calc.py::test_suma": {"status": "passed", "traceback": None}
     }
 
@@ -141,8 +144,8 @@ def test_run_returns_failed_dict(tmp_path, monkeypatch):
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
     stdout = "tests_generados/unit/test_calc.py::test_div FAILED\n"
     with patch("agent.test_runner.subprocess.run", return_value=_make_subprocess_result(stdout=stdout, returncode=1)):
-        result = run(str(tmp_path))
-    assert result["tests_generados/unit/test_calc.py::test_div"]["status"] == "failed"
+        results, cov = run(str(tmp_path))
+    assert results["tests_generados/unit/test_calc.py::test_div"]["status"] == "failed"
 
 
 def test_run_subprocess_called_with_list(tmp_path, monkeypatch):
@@ -258,9 +261,78 @@ def test_run_captures_stderr(tmp_path, monkeypatch, capsys):
         "agent.test_runner.subprocess.run",
         return_value=_make_subprocess_result(stderr="some error output", returncode=1),
     ):
-        result = run(str(tmp_path))
-    # No debe lanzar excepción; stderr se captura y procesa normalmente
-    assert isinstance(result, dict)
+        results, cov = run(str(tmp_path))
+    assert isinstance(results, dict)
+
+
+# ---------------------------------------------------------------------------
+# _parse_coverage — extracción del porcentaje de cobertura
+# ---------------------------------------------------------------------------
+
+_COVERAGE_OUTPUT = (
+    "---------- coverage: platform linux, python 3.11.0 ----------\n"
+    "Name                Stmts   Miss  Cover\n"
+    "----------------------------------------\n"
+    "calculadora.py         10      2    80%\n"
+    "estadistica.py         15      5    67%\n"
+    "----------------------------------------\n"
+    "TOTAL                  25      7    72%\n"
+)
+
+
+def test_parse_coverage_extracts_total_percentage():
+    assert _parse_coverage(_COVERAGE_OUTPUT) == 72.0
+
+
+def test_parse_coverage_100_percent():
+    output = "TOTAL   50   0   100%\n"
+    assert _parse_coverage(output) == 100.0
+
+
+def test_parse_coverage_no_coverage_info_returns_none():
+    assert _parse_coverage("no coverage output here\n") is None
+
+
+def test_parse_coverage_empty_string_returns_none():
+    assert _parse_coverage("") is None
+
+
+def test_run_cov_flag_added_when_repo_and_pytest_cov_available(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        importlib.util, "find_spec",
+        lambda name: object()  # simula pytest Y pytest_cov instalados
+    )
+    with patch("agent.test_runner.subprocess.run", return_value=_make_subprocess_result()) as mock_run:
+        run(str(tmp_path), repo_path="/some/repo")
+    cmd = mock_run.call_args[0][0]
+    assert any("--cov=" in arg for arg in cmd)
+
+
+def test_run_no_cov_flag_when_no_repo_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    with patch("agent.test_runner.subprocess.run", return_value=_make_subprocess_result()) as mock_run:
+        run(str(tmp_path))
+    cmd = mock_run.call_args[0][0]
+    assert not any("--cov" in arg for arg in cmd)
+
+
+def test_run_returns_coverage_pct_from_output(tmp_path, monkeypatch):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    stdout = (
+        "tests_generados/unit/test_calc.py::test_suma PASSED\n"
+        "TOTAL   25   7   72%\n"
+    )
+    with patch("agent.test_runner.subprocess.run", return_value=_make_subprocess_result(stdout=stdout)):
+        results, cov = run(str(tmp_path), repo_path="/some/repo")
+    assert cov == 72.0
+
+
+def test_run_returns_none_coverage_without_repo_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    stdout = "tests_generados/unit/test_calc.py::test_suma PASSED\nTOTAL   25   7   72%\n"
+    with patch("agent.test_runner.subprocess.run", return_value=_make_subprocess_result(stdout=stdout)):
+        results, cov = run(str(tmp_path))
+    assert cov is None
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +432,7 @@ def test_run_combines_pytest_and_jest_results(tmp_path, monkeypatch):
 
     with patch("agent.test_runner.subprocess.run", side_effect=fake_subprocess):
         with patch("agent.test_runner.shutil.which", return_value="/usr/bin/node"):
-            result = run(str(tmp_path))
+            results, cov = run(str(tmp_path))
 
-    assert any("js test" in k for k in result)
-    assert any("test_py" in k for k in result)
+    assert any("js test" in k for k in results)
+    assert any("test_py" in k for k in results)

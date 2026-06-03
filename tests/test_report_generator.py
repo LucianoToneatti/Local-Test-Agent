@@ -208,3 +208,40 @@ def test_generate_error_status_counts_as_failed(tmp_path, monkeypatch):
     content = output_file.read_text()
     assert "| Failed | 1 |" in content
     assert "## Tests fallidos" in content
+
+
+# ---------------------------------------------------------------------------
+# Tests de coverage_pct en generate()
+# ---------------------------------------------------------------------------
+
+def test_generate_coverage_shown_when_provided(tmp_path, monkeypatch):
+    output_file = tmp_path / "reporte.md"
+    monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)
+    rg.generate({}, "myrepo", 5.0, coverage_pct=78.0)
+    content = output_file.read_text()
+    assert "78%" in content
+    assert "**Cobertura:**" in content
+
+
+def test_generate_coverage_na_when_none(tmp_path, monkeypatch):
+    output_file = tmp_path / "reporte.md"
+    monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)
+    rg.generate({}, "myrepo", 5.0, coverage_pct=None)
+    content = output_file.read_text()
+    assert "N/A" in content
+
+
+def test_generate_coverage_in_summary_table(tmp_path, monkeypatch):
+    output_file = tmp_path / "reporte.md"
+    monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)
+    rg.generate({}, "myrepo", 5.0, coverage_pct=65.0)
+    content = output_file.read_text()
+    assert "| Cobertura | 65% |" in content
+
+
+def test_generate_coverage_default_is_na(tmp_path, monkeypatch):
+    output_file = tmp_path / "reporte.md"
+    monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)
+    rg.generate({}, "myrepo", 5.0)
+    content = output_file.read_text()
+    assert "| Cobertura | N/A |" in content
