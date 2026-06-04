@@ -2,11 +2,17 @@
 Autocorrector de tests fallidos.
 
 Itera los tests con status 'failed' o 'error' del dict producido por test_runner.run(),
-llama al LLM hasta 3 veces por test_id, re-ejecuta el test corregido individualmente,
-y marca como 'sin_resolver' los que no se pudieron corregir tras 3 intentos.
+clasifica cada error como corregible o posible_bug, y para los corregibles llama al LLM
+hasta 3 veces por test_id. Los posible_bug se registran sin intentar corrección.
+
+Clasificación:
+  posible_bug  — AssertionError con dos valores distintos extraíbles (el test es
+                 correcto pero el código falla).
+  corregible   — cualquier otro error (sintaxis, imports, NameError, TypeError, etc.)
 """
 
 import ast
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -19,10 +25,27 @@ from prompts.prompt_builder import CorrectionPromptTemplate, clean_response
 _TEMPLATE = CorrectionPromptTemplate()
 _MAX_ATTEMPTS = 3
 
+# Patrones para detectar comparaciones de valores en AssertionError.
+# Grupo 1 = valor izquierdo/esperado, Grupo 2 = valor derecho/obtenido.
+_ASSERT_VALUE_PATTERNS = [
+    # pytest línea de detalle: "E       assert 12 == 11" (con o sin prefijo "E")
+    re.compile(r'^E\s+assert\s+(.+?)\s*==\s*(.+)$', re.MULTILINE),
+    # pytest inline: "AssertionError: assert 4 == 5"
+    re.compile(r'AssertionError:\s*assert\s+(.+?)\s*==\s*(.+)', re.IGNORECASE),
+    # JUnit:   "expected: <4> but was: <5>"
+    re.compile(r'expected:\s*<([^>]+)>\s*but was:\s*<([^>]+)>', re.IGNORECASE),
+    # pytest approx: "Obtained: 50.0" + "Expected: 25.0"
+    re.compile(r'Obtained:\s*(.+?)\n\s*Expected:\s*(.+)', re.IGNORECASE),
+    # genérico: "expected 4 but was 5" / "expected 4 got 5"
+    re.compile(r'expected:?\s+(.+?)\s+(?:but was|got|actual):?\s+(.+)', re.IGNORECASE),
+    # AssertionError con !=: "AssertionError: 4 != 5"
+    re.compile(r'AssertionError:\s*(.+?)\s*!=\s*(.+)', re.IGNORECASE),
+]
+
 
 def autocorrect(results: dict, repo_path: str, client=None) -> dict:
     """
-    Corrige tests fallidos hasta 3 intentos por test_id.
+    Clasifica y corrige tests fallidos hasta 3 intentos por test_id.
 
     Args:
         results: Dict producido por test_runner.run().
@@ -31,10 +54,11 @@ def autocorrect(results: dict, repo_path: str, client=None) -> dict:
         client: Cliente LLM a usar. Si es None crea OllamaClient() por defecto.
 
     Returns:
-        Dict con mismo formato que results, más campo 'attempts' en tests corregidos.
-        Tests corregidos → 'passed'. Tests agotados → 'sin_resolver'.
-        'attempts': list[{'traceback': str|None, 'generated_code': str}] — historial
-        de cada intento (traceback recibido + código generado por el LLM), en orden.
+        Dict con mismo formato que results. Posibles status finales:
+        - 'passed':       corregido exitosamente.
+        - 'sin_resolver': agotó 3 intentos sin éxito.
+        - 'posible_bug':  AssertionError con valores concretos — no se intenta
+                          corrección. Incluye campos 'expected' y 'actual'.
         No modifica tests que ya tenían status 'passed'.
     """
     if client is None:
@@ -44,9 +68,60 @@ def autocorrect(results: dict, repo_path: str, client=None) -> dict:
     for test_id, info in results.items():
         if info["status"] not in ("failed", "error"):
             continue
-        final[test_id] = _correct_test(client, test_id, info, repo_path)
+        if _classify_error(info.get("traceback")) == "posible_bug":
+            final[test_id] = _mark_as_possible_bug(info)
+        else:
+            final[test_id] = _correct_test(client, test_id, info, repo_path)
 
     return final
+
+
+_JUNIT_ASSERT_PAT = re.compile(r'expected:\s*<[^>]+>\s*but was:\s*<[^>]+>', re.IGNORECASE)
+
+
+def _classify_error(traceback: str | None) -> str:
+    """
+    Clasifica el error como 'posible_bug' o 'corregible'.
+
+    Es 'posible_bug' cuando el traceback indica una discrepancia de valores
+    concreta (expected ≠ actual): bien por AssertionError con valores extraíbles,
+    bien por el formato JUnit 'expected: <X> but was: <Y>'.
+    Cualquier otro error (NameError, TypeError, ImportError, etc.) es 'corregible'.
+    """
+    if not traceback:
+        return "corregible"
+    has_assert = "AssertionError" in traceback
+    has_junit = bool(_JUNIT_ASSERT_PAT.search(traceback))
+    if not has_assert and not has_junit:
+        return "corregible"
+    expected, actual = _extract_assert_values(traceback)
+    if expected is not None and actual is not None and expected != actual:
+        return "posible_bug"
+    return "corregible"
+
+
+def _extract_assert_values(traceback: str) -> tuple[str | None, str | None]:
+    """
+    Intenta extraer (expected, actual) de un traceback con AssertionError.
+    Retorna (None, None) si no encuentra el patrón.
+    """
+    for pattern in _ASSERT_VALUE_PATTERNS:
+        m = pattern.search(traceback)
+        if m:
+            return m.group(1).strip(), m.group(2).strip()
+    return None, None
+
+
+def _mark_as_possible_bug(info: dict) -> dict:
+    """Construye el dict de resultado para un test clasificado como posible_bug."""
+    tb = info.get("traceback") or ""
+    expected, actual = _extract_assert_values(tb)
+    return {
+        "status": "posible_bug",
+        "traceback": tb,
+        "expected": expected,
+        "actual": actual,
+    }
 
 
 def _correct_test(client: LLMClient, test_id: str, info: dict, repo_path: str) -> dict:

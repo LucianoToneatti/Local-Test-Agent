@@ -245,3 +245,74 @@ def test_generate_coverage_default_is_na(tmp_path, monkeypatch):
     rg.generate({}, "myrepo", 5.0)
     content = output_file.read_text()
     assert "| Cobertura | N/A |" in content
+
+
+# ---------------------------------------------------------------------------
+# Tests de posible_bug en generate()
+# ---------------------------------------------------------------------------
+
+def test_generate_possible_bug_row_in_table(tmp_path, monkeypatch):
+    output_file = tmp_path / "reporte.md"
+    monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)
+    results = {
+        "t1": {"status": "posible_bug", "traceback": "AssertionError: assert 4 == 5",
+               "expected": "4", "actual": "5"},
+    }
+    rg.generate(results, "myrepo", 1.0)
+    content = output_file.read_text()
+    assert "| Posible bug | 1 |" in content
+
+
+def test_generate_possible_bug_section_heading(tmp_path, monkeypatch):
+    output_file = tmp_path / "reporte.md"
+    monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)
+    results = {
+        "tests/test_calc.py::test_suma": {
+            "status": "posible_bug", "traceback": "AssertionError: assert 4 == 5",
+            "expected": "4", "actual": "5",
+        },
+    }
+    rg.generate(results, "myrepo", 1.0)
+    content = output_file.read_text()
+    assert "## Posible bug detectado" in content
+
+
+def test_generate_possible_bug_shows_expected_actual(tmp_path, monkeypatch):
+    output_file = tmp_path / "reporte.md"
+    monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)
+    results = {
+        "tests/test_calc.py::test_suma": {
+            "status": "posible_bug", "traceback": "AssertionError: assert 4 == 5",
+            "expected": "4", "actual": "5",
+        },
+    }
+    rg.generate(results, "myrepo", 1.0)
+    content = output_file.read_text()
+    assert "Esperado: `4`" in content
+    assert "Obtenido: `5`" in content
+
+
+def test_generate_no_possible_bug_section_when_empty(tmp_path, monkeypatch):
+    output_file = tmp_path / "reporte.md"
+    monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)
+    results = {"t1": {"status": "passed", "traceback": None}}
+    rg.generate(results, "myrepo", 1.0)
+    content = output_file.read_text()
+    assert "## Posible bug detectado" not in content
+
+
+def test_generate_summary_counts_possible_bug(tmp_path, monkeypatch):
+    output_file = tmp_path / "reporte.md"
+    monkeypatch.setattr(rg, "_OUTPUT_PATH", output_file)
+    results = {
+        "t1": {"status": "passed", "traceback": None},
+        "t2": {"status": "posible_bug", "traceback": "AssertionError: assert 4 == 5",
+               "expected": "4", "actual": "5"},
+        "t3": {"status": "sin_resolver", "traceback": None, "attempts": []},
+    }
+    rg.generate(results, "myrepo", 1.0)
+    content = output_file.read_text()
+    assert "| Passed | 1 |" in content
+    assert "| Posible bug | 1 |" in content
+    assert "| Sin resolver | 1 |" in content
+    assert "**Total:** 3 tests" in content

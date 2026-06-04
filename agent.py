@@ -96,7 +96,10 @@ def main() -> None:
             final = autocorrect(results, str(repo), client=client)
             resolved = sum(1 for v in final.values() if v["status"] == "passed")
             unresolved = sum(1 for v in final.values() if v["status"] == "sin_resolver")
-            terminal_ui.print_ok(f"Autocorreccion: {resolved} resuelto(s), {unresolved} sin resolver\n")
+            bugs = sum(1 for v in final.values() if v["status"] == "posible_bug")
+            terminal_ui.print_ok(
+                f"Autocorreccion: {resolved} resuelto(s), {unresolved} sin resolver, {bugs} posible(s) bug\n"
+            )
         else:
             final = results
             terminal_ui.print_ok("Todos los tests pasaron\n")
@@ -112,7 +115,11 @@ def main() -> None:
     passed_final = sum(1 for v in final.values() if v["status"] == "passed")
     failed_final = sum(1 for v in final.values() if v["status"] in ("failed", "error"))
     unresolved_final = sum(1 for v in final.values() if v["status"] == "sin_resolver")
-    terminal_ui.print_summary(passed_final, failed_final, unresolved_final, elapsed, coverage_pct)
+    possible_bugs_final = sum(1 for v in final.values() if v["status"] == "posible_bug")
+    terminal_ui.print_summary(
+        passed_final, failed_final, unresolved_final, elapsed, coverage_pct,
+        possible_bugs=possible_bugs_final,
+    )
 
 
 if __name__ == "__main__":

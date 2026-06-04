@@ -36,6 +36,9 @@ def generate(
     unresolved_items = [
         (tid, v) for tid, v in results.items() if v["status"] == "sin_resolver"
     ]
+    possible_bug_items = [
+        (tid, v) for tid, v in results.items() if v["status"] == "posible_bug"
+    ]
 
     fecha = datetime.date.today().isoformat()
     total = len(results)
@@ -55,6 +58,7 @@ def generate(
         f"| Passed | {passed} |",
         f"| Failed | {len(failed_items)} |",
         f"| Sin resolver | {len(unresolved_items)} |",
+        f"| Posible bug | {len(possible_bug_items)} |",
         f"| Cobertura | {cov_str} |",
         "",
         f"**Total:** {total} tests",
@@ -88,6 +92,18 @@ def generate(
             lines.append(f"- `{tid}`")
             lines.append(f"  ({n_attempts} intentos agotados)")
             lines.append(f"  `{last_line}`")
+
+    if possible_bug_items:
+        lines += [
+            "",
+            "## Posible bug detectado",
+            "",
+        ]
+        for tid, v in possible_bug_items:
+            expected = v.get("expected") or "?"
+            actual = v.get("actual") or "?"
+            lines.append(f"- `{tid}`")
+            lines.append(f"  Esperado: `{expected}` — Obtenido: `{actual}`")
 
     content = "\n".join(lines) + "\n"
     _OUTPUT_PATH.write_text(content, encoding="utf-8")

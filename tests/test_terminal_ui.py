@@ -218,3 +218,28 @@ def test_print_summary_unresolved_uses_yellow_when_nonzero(capsys):
     print_summary(0, 0, 1, 5.0)
     out = capsys.readouterr().out
     assert YELLOW in out
+
+
+def test_print_summary_shows_possible_bugs(capsys):
+    print_summary(0, 0, 0, 5.0, possible_bugs=2)
+    out = capsys.readouterr().out
+    assert "Posible bug" in out
+    assert "2" in out
+
+
+def test_print_summary_possible_bugs_uses_red_when_nonzero(capsys):
+    print_summary(0, 0, 0, 5.0, possible_bugs=1)
+    out = capsys.readouterr().out
+    assert RED in out
+
+
+def test_print_summary_total_includes_possible_bugs(capsys):
+    print_summary(3, 0, 1, 5.0, possible_bugs=2)
+    out = capsys.readouterr().out
+    assert "6" in out  # total = 3 + 0 + 1 + 2
+
+
+def test_print_summary_possible_bugs_zero_by_default(capsys):
+    print_summary(2, 0, 0, 5.0)
+    out = capsys.readouterr().out
+    assert "Posible bug:  0" in out

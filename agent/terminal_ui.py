@@ -64,15 +64,18 @@ def print_summary(
     unresolved: int,
     elapsed: float,
     coverage_pct: float | None = None,
+    possible_bugs: int = 0,
 ) -> None:
     """Imprime el resumen final con colores y tiempo formateado."""
-    total = passed + failed + unresolved
+    total = passed + failed + unresolved + possible_bugs
     print(f"\n{BOLD}+--- Resumen final ---+{RESET}")
     print(f"  {GREEN}Passed:       {passed}{RESET}")
     failed_str = f"{RED}Failed:       {failed}{RESET}" if failed > 0 else f"Failed:       {failed}"
     print(f"  {failed_str}")
     unres_str = f"{YELLOW}Sin resolver: {unresolved}{RESET}" if unresolved > 0 else f"Sin resolver: {unresolved}"
     print(f"  {unres_str}")
+    bugs_str = f"{RED}Posible bug:  {possible_bugs}{RESET}" if possible_bugs > 0 else f"Posible bug:  {possible_bugs}"
+    print(f"  {bugs_str}")
     print(f"  Total:        {total}")
     if coverage_pct is not None:
         print(f"  Cobertura:    {coverage_pct:.0f}%")
