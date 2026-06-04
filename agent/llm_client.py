@@ -8,6 +8,7 @@ LLMClient es alias de OllamaClient para compatibilidad con el código existente.
 
 import json
 import os
+import re
 import time
 import urllib.request
 import urllib.error
@@ -80,6 +81,22 @@ class OllamaClient:
             return False
 
 
+_GROQ_RETRY_PAT = re.compile(r"try again in ([\d.]+)s", re.IGNORECASE)
+_GROQ_RETRY_DEFAULT = 20
+
+
+def _parse_groq_retry_seconds(body: str) -> float:
+    """Parsea los segundos de espera del mensaje 429 de Groq y agrega 1s de margen.
+
+    Groq incluye frases como 'Please try again in 17.29s' en el body del error.
+    Si no se puede parsear, retorna el valor por defecto de 20s.
+    """
+    match = _GROQ_RETRY_PAT.search(body)
+    if match:
+        return float(match.group(1)) + 1.0
+    return float(_GROQ_RETRY_DEFAULT)
+
+
 class GroqClient:
     def __init__(self, model: str = DEFAULT_GROQ_MODEL):
         self.model = model
@@ -119,12 +136,12 @@ class GroqClient:
                     result = json.loads(body)
                     return result["choices"][0]["message"]["content"]
             except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8")
                 if e.code == 429:
                     last_exc = GroqAPIError(f"Error de Groq API ({e.code}): rate limit")
                     if attempt < 2:
-                        time.sleep(10)
+                        time.sleep(_parse_groq_retry_seconds(body))
                         continue
-                body = e.read().decode("utf-8")
                 raise GroqAPIError(f"Error de Groq API ({e.code}): {body}") from e
             except urllib.error.URLError as e:
                 raise GroqAPIError(f"No se pudo conectar con Groq: {e.reason}") from e
