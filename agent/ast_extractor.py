@@ -2,7 +2,7 @@
 Extractor AST/regex para repositorios Python, JavaScript/TypeScript y Java.
 
 Para .py usa el módulo ast de stdlib. Para .js/.ts/.java usa regex dado que
-no existe un parser de esos lenguajes en la stdlib de Python.
+no existe parser de estos lenguajes en la stdlib de Python.
 
 Devuelve en todos los casos un dict unificado con funciones top-level,
 clases (con sus métodos) e imports del mismo repo.
@@ -57,41 +57,43 @@ _JS_METHOD = re.compile(
 
 _JS_IMPORT_PAT = re.compile(r"""(?:from|require)\s*\(?\s*['"](\.[^'"]+)['"]""")
 
-_JS_CONTROL_KEYWORDS = {
-    'if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new',
-    'typeof', 'instanceof', 'await', 'yield', 'delete', 'void', 'super',
-    'class', 'import', 'export', 'from', 'const', 'let', 'var', 'function',
-}
-
 # ---------------------------------------------------------------------------
 # Patrones regex para Java
 # ---------------------------------------------------------------------------
 
 _JAVA_CLASS_DECL = re.compile(
     r'^[ \t]*(?:(?:public|private|protected|abstract|final|static)\s+)*'
-    r'class\s+([A-Za-z_$][A-Za-z0-9_$]*)',
+    r'(?:class|interface|enum)\s+([A-Z][a-zA-Z0-9_$]*)',
     re.MULTILINE,
 )
 
-# Captura: [modificadores] [tipo_retorno] [nombreMétodo](
-# El tipo de retorno debe ir seguido de espacio para distinguirlo del nombre.
-_JAVA_METHOD_DECL = re.compile(
-    r'^[ \t]+'
-    r'(?:(?:public|private|protected|abstract|static|final|synchronized|native)\s+)*'
-    r'(?:[A-Za-z_$][A-Za-z0-9_$]*(?:<[^>]*>)?(?:\[\])*\s+)'
-    r'([A-Za-z_$][A-Za-z0-9_$]*)\s*\(',
+# Métodos Java: indentados, modificadores opcionales, tipo retorno, nombre(params)
+_JAVA_METHOD = re.compile(
+    r'^([ \t]+)'
+    r'(?:(?:public|private|protected|static|final|abstract|synchronized|default|native)\s+)*'
+    r'(?:<[^>]+>\s+)?'                          # generic type params opcionales
+    r'([a-zA-Z_$][\w$<>\[\],\s.]*?)\s+'         # tipo de retorno (non-greedy)
+    r'([a-zA-Z_$][a-zA-Z0-9_$]*)\s*'            # nombre del método
+    r'\(([^)]*)\)',                              # parámetros
     re.MULTILINE,
 )
 
 _JAVA_CONTROL_KEYWORDS = {
-    'if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new',
-    'instanceof', 'assert', 'super', 'this', 'else',
+    'if', 'for', 'while', 'switch', 'catch', 'try', 'return', 'throw', 'new',
+    'else', 'synchronized', 'do', 'assert', 'finally', 'instanceof',
+    'class', 'interface', 'enum', 'import', 'package', 'extends', 'implements',
+    'super', 'this', 'static', 'final', 'abstract', 'public', 'private', 'protected',
 }
 
+_JS_CONTROL_KEYWORDS = {
+    'if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new',
+    'typeof', 'instanceof', 'await', 'yield', 'delete', 'void', 'super',
+    'class', 'import', 'export', 'from', 'const', 'let', 'var', 'function',
+}
 
 def extract(files: list[str], repo_path: str) -> dict:
     """
-    Extrae funciones, clases e imports de una lista de archivos .py/.js/.ts.
+    Extrae funciones, clases e imports de una lista de archivos .py/.js/.ts/.java.
 
     Args:
         files: Lista de rutas relativas al repo_path (output de explore()).
@@ -106,10 +108,10 @@ def extract(files: list[str], repo_path: str) -> dict:
     for rel_path in files:
         abs_path = root / rel_path
         suffix = Path(rel_path).suffix
-        if suffix in _JS_EXTENSIONS:
-            result[rel_path] = _parse_js_file(abs_path, repo_files_set, root)
-        elif suffix in _JAVA_EXTENSIONS:
+        if suffix in _JAVA_EXTENSIONS:
             result[rel_path] = _parse_java_file(abs_path)
+        elif suffix in _JS_EXTENSIONS:
+            result[rel_path] = _parse_js_file(abs_path, repo_files_set, root)
         else:
             result[rel_path] = _parse_python_file(abs_path, repo_files_set, root)
     return result
@@ -372,40 +374,16 @@ def _parse_js_file(abs_path: Path, repo_files_set: set, root: Path) -> dict:
 # Parser Java (regex-based)
 # ---------------------------------------------------------------------------
 
-def _extract_java_methods(class_source: str, class_lines: list[str], class_start: int) -> list[dict]:
-    """Extrae métodos de un bloque de clase Java usando conteo de llaves."""
-    methods = []
-    seen: set[int] = set()
+def _parse_java_file(abs_path: Path) -> dict:
+    try:
+        source = abs_path.read_text(encoding='utf-8')
+    except OSError as e:
+        return {'functions': [], 'classes': [], 'imports': [], 'parse_error': str(e)}
 
-    for match in _JAVA_METHOD_DECL.finditer(class_source):
-        name = match.group(1)
-        if name in _JAVA_CONTROL_KEYWORDS:
-            continue
-
-        local_lineno = class_source.count('\n', 0, match.start()) + 1
-        if local_lineno in seen:
-            continue
-
-        match_line = class_lines[local_lineno - 1] if local_lineno <= len(class_lines) else ''
-        next_line = class_lines[local_lineno] if local_lineno < len(class_lines) else ''
-        if '{' not in match_line and not next_line.strip().startswith('{'):
-            continue
-
-        seen.add(local_lineno)
-        abs_lineno = class_start + local_lineno - 1
-        end_lineno = _find_js_end_lineno(class_lines, local_lineno)
-        abs_end_lineno = class_start + end_lineno - 1
-
-        methods.append({
-            'name': name,
-            'type': 'function',
-            'params': [],
-            'docstring': '',
-            '_lineno': abs_lineno,
-            '_end_lineno': abs_end_lineno,
-        })
-
-    return methods
+    lines = source.splitlines()
+    classes = _extract_java_classes(source, lines)
+    # Java imports son por FQN (no rutas relativas del repo) → no se rastrean como dependencias
+    return {'functions': [], 'classes': classes, 'imports': []}
 
 
 def _extract_java_classes(source: str, lines: list[str]) -> list[dict]:
@@ -428,15 +406,59 @@ def _extract_java_classes(source: str, lines: list[str]) -> list[dict]:
     return result
 
 
-def _parse_java_file(abs_path: Path) -> dict:
-    try:
-        source = abs_path.read_text(encoding='utf-8')
-    except OSError as e:
-        return {'functions': [], 'classes': [], 'imports': [], 'parse_error': str(e)}
+def _extract_java_methods(class_source: str, class_lines: list[str], class_start: int) -> list[dict]:
+    methods = []
+    seen: set[int] = set()
 
-    lines = source.splitlines()
-    classes = _extract_java_classes(source, lines)
-    return {'functions': [], 'classes': classes, 'imports': []}
+    for match in _JAVA_METHOD.finditer(class_source):
+        return_type = match.group(2).strip()
+        name = match.group(3)
+
+        if name in _JAVA_CONTROL_KEYWORDS or return_type in _JAVA_CONTROL_KEYWORDS:
+            continue
+        if not match.group(1):
+            continue
+
+        local_lineno = class_source.count('\n', 0, match.start()) + 1
+        if local_lineno in seen:
+            continue
+
+        match_line = class_lines[local_lineno - 1] if local_lineno <= len(class_lines) else ''
+        next_line = class_lines[local_lineno] if local_lineno < len(class_lines) else ''
+        if '{' not in match_line and not next_line.strip().startswith('{'):
+            continue
+
+        seen.add(local_lineno)
+        abs_lineno = class_start + local_lineno - 1
+        end_lineno = _find_js_end_lineno(class_lines, local_lineno)
+        abs_end_lineno = class_start + end_lineno - 1
+
+        params_str = match.group(4) or ''
+        params = _parse_java_params(params_str)
+
+        methods.append({
+            'name': name,
+            'type': 'function',
+            'params': params,
+            'docstring': '',
+            '_lineno': abs_lineno,
+            '_end_lineno': abs_end_lineno,
+        })
+
+    return methods
+
+
+def _parse_java_params(params_str: str) -> list[str]:
+    if not params_str.strip():
+        return []
+    params = []
+    for p in params_str.split(','):
+        parts = p.strip().split()
+        if parts:
+            name = parts[-1].lstrip('.')
+            if name and re.match(r'^[a-zA-Z_$]', name):
+                params.append(name)
+    return params
 
 
 def _extract_functions(tree: ast.AST, source_lines: list[str]) -> list[dict]:

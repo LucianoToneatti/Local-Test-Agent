@@ -1,15 +1,14 @@
 """
-Runner de tests para Python (pytest) y JavaScript/TypeScript (Jest).
+Runner de tests para Python (pytest), JavaScript/TypeScript (Jest) y Java (Maven).
 
 Detecta automaticamente que tipos de tests hay en el directorio y ejecuta
-pytest y/o Jest segun corresponda. Los resultados se combinan en el mismo
+pytest, Jest y/o Maven segun corresponda. Los resultados se combinan en el mismo
 formato {test_id: {status, traceback}}.
 
 Prerequisitos:
 - Python: pytest instalado en el entorno activo.
-- JavaScript: Node.js y Jest instalados. El agente asume que los
-  desarrolladores JS ya tienen estas herramientas — son parte de su
-  entorno habitual, igual que Python/pytest lo son para Python.
+- JavaScript: Node.js y Jest instalados.
+- Java: Maven (mvn) instalado. Si no está disponible, el agente lo indica claramente.
 """
 
 import importlib.util
@@ -132,8 +131,10 @@ def _run_maven(tests_dir: str) -> dict:
     """
     Ejecuta mvn test sobre proyectos Maven encontrados dentro de tests_dir.
 
-    Busca pom.xml con rglob para soportar el caso en que el proyecto Maven
-    esté en un subdirectorio de tests_dir (ej. tests_generados/unit/).
+    Busca *Test.java recursivamente (no solo en src/test/java/ directo) para
+    soportar el caso en que tests_dir sea el directorio raíz de salida
+    (tests_generados/) y el proyecto Maven esté en un subdirectorio (unit/).
+    Para cada pom.xml encontrado corre Maven y parsea los XMLs de Surefire.
     """
     tests_path = Path(tests_dir).resolve()
 
@@ -144,9 +145,12 @@ def _run_maven(tests_dir: str) -> dict:
     if not shutil.which("mvn"):
         print("[INFO] Maven (mvn) no está instalado.")
         print("    Los tests Java fueron generados pero no se pueden ejecutar.")
+        print("    Para instalar Maven:")
+        print("    sudo apt install maven")
         pom_files = list(tests_path.rglob("pom.xml"))
         if pom_files:
-            print(f"    Una vez instalado, ejecutá: cd {pom_files[0].parent} && mvn test")
+            print("    Una vez instalado, ejecutá:")
+            print(f"    cd {pom_files[0].parent} && mvn test")
         return {}
 
     pom_files = list(tests_path.rglob("pom.xml"))
@@ -157,7 +161,7 @@ def _run_maven(tests_dir: str) -> dict:
     results = {}
     for pom_path in pom_files:
         maven_root = pom_path.parent
-        subprocess.run(
+        proc = subprocess.run(
             ["mvn", "test", "--batch-mode"],
             text=True,
             cwd=str(maven_root),

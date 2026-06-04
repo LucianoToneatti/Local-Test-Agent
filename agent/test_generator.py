@@ -3,7 +3,7 @@ Generador de tests unitarios para repositorios Python, JavaScript/TypeScript y J
 
 Para Python genera archivos pytest en tests_generados/unit/test_<stem>.py.
 Para JS/TS genera archivos Jest en tests_generados/unit/<stem>.test.js.
-Para Java genera archivos JUnit 5 en tests_generados/unit/src/test/java/<Clase>Test.java.
+Para Java genera archivos JUnit 5 en tests_generados/unit/src/test/java/<Class>Test.java.
 
 Llama al LLM una vez por función/método, valida el output y reintenta
 una vez si el código generado no es válido.
@@ -195,6 +195,7 @@ def _generate_block(
     module_name: str,
     class_name: Optional[str],
     language: str = "python",
+    class_source: str = "",
 ) -> str:
     """
     Genera un bloque de tests para una función o método.
@@ -210,6 +211,7 @@ def _generate_block(
             function_name=func_name,
             module_name=module_name,
             class_name=class_name,
+            class_source=class_source,
         )
         raw = client.generate(prompt.user, system=prompt.system)
         code = clean_response(raw, strip_imports=True, language=language)
@@ -250,7 +252,16 @@ def _read_source_lines(repo: Path, rel_path: str) -> Optional[list[str]]:
 
 
 def _has_balanced_braces(code: str) -> bool:
-    return code.count("{") == code.count("}")
+    """Devuelve True si el código Java tiene llaves { } correctamente balanceadas."""
+    depth = 0
+    for ch in code:
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+        if depth < 0:
+            return False
+    return depth == 0
 
 
 def _is_embeddable_java_block(code: str, class_name: Optional[str] = None) -> bool:
@@ -341,7 +352,7 @@ def _compile_and_fix_java(client: LLMClient, maven_root: Path) -> None:
 
         errors_by_file = _parse_javac_errors(result.stdout + result.stderr)
         if not errors_by_file:
-            return  # error no identificable, no podemos corregir
+            return
 
         for file_path, error_text in errors_by_file.items():
             try:
@@ -353,7 +364,7 @@ def _compile_and_fix_java(client: LLMClient, maven_root: Path) -> None:
                 file_path.write_text(fixed, encoding="utf-8")
 
 
-def _generate_java_tests(client, repo: Path, rel_path: str, file_info: dict) -> None:
+def _generate_java_tests(client: LLMClient, repo: Path, rel_path: str, file_info: dict) -> None:
     """Genera un archivo <ClassName>Test.java por cada clase en el archivo fuente."""
     source_lines = _read_source_lines(repo, rel_path)
     if source_lines is None:
@@ -363,6 +374,7 @@ def _generate_java_tests(client, repo: Path, rel_path: str, file_info: dict) -> 
 
     for cls in file_info.get("classes", []):
         class_name = cls["name"]
+        class_source = "\n".join(source_lines) if source_lines else ""
         blocks = []
         seen_method_names: set[str] = set()
         for method in cls.get("methods", []):
@@ -373,7 +385,11 @@ def _generate_java_tests(client, repo: Path, rel_path: str, file_info: dict) -> 
                 module_name=class_name,
                 class_name=class_name,
                 language="java",
+                class_source=class_source,
             )
+            if not _is_embeddable_java_block(block, class_name):
+                print(f"[WARN] {class_name}.{method['name']}: bloque descartado")
+                continue
             names = re.findall(r'\bvoid\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(', block)
             if any(n in seen_method_names for n in names):
                 continue
@@ -387,12 +403,25 @@ def _generate_java_tests(client, repo: Path, rel_path: str, file_info: dict) -> 
 
 def _build_java_test_file(class_name: str, blocks: list[str]) -> str:
     """Arma el archivo Java completo con imports JUnit 5 y wrapper de clase."""
-    header = (
-        "import org.junit.jupiter.api.Test;\n"
-        "import static org.junit.jupiter.api.Assertions.*;\n"
-        "\n"
-        f"class {class_name}Test {{\n"
-    )
+    combined = "\n".join(blocks)
+
+    imports = [
+        "import org.junit.jupiter.api.Test;",
+        "import org.junit.jupiter.api.Assertions;",
+        "import static org.junit.jupiter.api.Assertions.*;",
+    ]
+    if "@BeforeEach" in combined:
+        imports.append("import org.junit.jupiter.api.BeforeEach;")
+    if "ArrayList" in combined:
+        imports.append("import java.util.ArrayList;")
+    if "Arrays." in combined:
+        imports.append("import java.util.Arrays;")
+    if re.search(r'\bList[<\s]', combined):
+        imports.append("import java.util.List;")
+
+    header = "\n".join(imports) + f"\n\nclass {class_name}Test {{\n"
+
+
     indented_blocks = []
     for block in blocks:
         indented = "\n".join(
