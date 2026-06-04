@@ -12,6 +12,7 @@ una vez si el código generado no es válido.
 import ast
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -33,7 +34,7 @@ def _detect_language(rel_path: str) -> str:
     return "javascript" if suffix in _JS_EXTENSIONS else "python"
 
 
-def generate(repo_path: str, ast_result: dict, progress_callback=None) -> None:
+def generate(repo_path: str, ast_result: dict, progress_callback=None, client=None) -> None:
     """
     Genera tests unitarios para todas las funciones y métodos del ast_result.
 
@@ -43,9 +44,11 @@ def generate(repo_path: str, ast_result: dict, progress_callback=None) -> None:
                     Estructura: {rel_path: {functions, classes, imports}}
         progress_callback: Callable opcional con firma (current, total, label).
                            Se llama despues de procesar cada archivo.
+        client: Cliente LLM a usar. Si es None crea OllamaClient() por defecto.
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    client = LLMClient()
+    if client is None:
+        client = LLMClient()
     repo = Path(repo_path).expanduser().resolve()
     has_python = False
     has_js = False
@@ -87,6 +90,8 @@ def generate(repo_path: str, ast_result: dict, progress_callback=None) -> None:
     if has_java:
         _copy_java_sources(repo)
         _write_java_pom()
+        if shutil.which("mvn"):
+            _compile_and_fix_java(client, OUTPUT_DIR)
 
 
 def _build_import_header(module_name: str, file_info: dict) -> str:
@@ -215,7 +220,7 @@ def _generate_block(
             if "test(" in code or "describe(" in code or "it(" in code:
                 return code
         elif language == "java":
-            if "@Test" in code or "void test" in code.lower():
+            if _is_embeddable_java_block(code, class_name):
                 return code
         else:
             try:
@@ -259,17 +264,31 @@ def _has_balanced_braces(code: str) -> bool:
     return depth == 0
 
 
-def _is_embeddable_java_block(code: str) -> bool:
-    """
-    Devuelve True si el bloque es seguro para incrustar dentro de una clase Java.
-
-    Rechaza bloques que contengan declaraciones 'import' o 'class' a nivel de línea,
-    que son inválidas dentro del cuerpo de una clase y causarían errores de compilación.
-    También exige llaves balanceadas.
-    """
+def _is_embeddable_java_block(code: str, class_name: Optional[str] = None) -> bool:
+    """Valida que el bloque sea seguro para incrustar dentro del cuerpo de una clase Java."""
     if not _has_balanced_braces(code):
         return False
     if re.search(r'\d+L\b', code):
+        return False
+    # JUnit 4: expected = SomeException.class, tanto suelto como dentro de @Test(expected=...)
+    if re.search(r'\bexpected\s*=', code):
+        return False
+    # Int. es un typo frecuente del LLM; la clase correcta es Integer.
+    if re.search(r'\bInt\.', code):
+        return False
+    # Comentario Python (#) dentro de código Java — el bloque está malformado.
+    if re.search(r'^\s*#', code, re.MULTILINE):
+        return False
+    # El nombre de clase instanciado debe coincidir exactamente con class_name esperado.
+    if class_name:
+        instantiated = re.findall(r'\bnew\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(', code)
+        if instantiated and not all(name == class_name for name in instantiated):
+            return False
+    # delta/DELTA usado sin haber sido declarado en el mismo bloque.
+    if re.search(r'\bDELTA\b|\bdelta\b', code) and not re.search(r'\b(?:double|float)\s+delta\b', code):
+        return False
+    # null pasado a un método — incompatible con tipos primitivos (int, double, float, etc.)
+    if re.search(r'\bnull\b', code):
         return False
     for line in code.splitlines():
         s = line.strip()
@@ -278,6 +297,71 @@ def _is_embeddable_java_block(code: str) -> bool:
         if re.match(r'(?:(?:public|private|protected|abstract|static|final)\s+)*class\s+\w', s):
             return False
     return True
+
+
+# Patrón de error javac en output de mvn --batch-mode:
+# [ERROR] /abs/path/Foo.java:[25,1] error: <identifier> expected
+_JAVAC_ERROR_PAT = re.compile(r'\[ERROR\]\s+(/[^\s:]+\.java):\[(\d+),\d+\]\s+(.*)')
+
+
+def _parse_javac_errors(output: str) -> dict:
+    """Extrae {Path: texto_de_errores} del output de mvn test-compile --batch-mode."""
+    errors: dict = {}
+    for match in _JAVAC_ERROR_PAT.finditer(output):
+        path = Path(match.group(1))
+        error = f"line {match.group(2)}: {match.group(3)}"
+        errors.setdefault(path, []).append(error)
+    return {p: "\n".join(errs) for p, errs in errors.items()}
+
+
+def _fix_java_file_with_llm(client: LLMClient, content: str, errors: str) -> Optional[str]:
+    """Pide al LLM que corrija los errores de compilación en el archivo Java."""
+    system = (
+        "You are a Java expert. Fix the compilation errors in the Java file below. "
+        "Return ONLY the complete corrected Java file. "
+        "No markdown, no backticks, no explanations. "
+        "Start your response with the first line of the file (import or class declaration)."
+    )
+    user = (
+        f"Fix the following Java compilation errors:\n\n"
+        f"ERRORS:\n{errors}\n\n"
+        f"FILE:\n{content}"
+    )
+    raw = client.generate(user, system=system)
+    blocks = re.findall(r"```(?:java)?\n?(.*?)```", raw, re.DOTALL)
+    fixed = blocks[0].strip() if blocks else raw.strip()
+    return fixed or None
+
+
+def _compile_and_fix_java(client: LLMClient, maven_root: Path) -> None:
+    """
+    Ciclo de compilación-corrección post-generación.
+
+    Ejecuta mvn test-compile; si falla, manda el error al LLM para que corrija
+    el archivo. Repite hasta 3 veces o hasta que compile limpio.
+    """
+    for attempt in range(3):
+        result = subprocess.run(
+            ["mvn", "test-compile", "--batch-mode"],
+            capture_output=True,
+            text=True,
+            cwd=str(maven_root),
+        )
+        if result.returncode == 0:
+            return
+
+        errors_by_file = _parse_javac_errors(result.stdout + result.stderr)
+        if not errors_by_file:
+            return
+
+        for file_path, error_text in errors_by_file.items():
+            try:
+                content = file_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            fixed = _fix_java_file_with_llm(client, content, error_text)
+            if fixed:
+                file_path.write_text(fixed, encoding="utf-8")
 
 
 def _generate_java_tests(client: LLMClient, repo: Path, rel_path: str, file_info: dict) -> None:
@@ -290,10 +374,10 @@ def _generate_java_tests(client: LLMClient, repo: Path, rel_path: str, file_info
 
     for cls in file_info.get("classes", []):
         class_name = cls["name"]
-        methods = cls.get("methods", [])
         class_source = "\n".join(source_lines) if source_lines else ""
         blocks = []
-        for method in methods:
+        seen_method_names: set[str] = set()
+        for method in cls.get("methods", []):
             block = _generate_block(
                 client=client,
                 source_lines=source_lines,
@@ -303,9 +387,13 @@ def _generate_java_tests(client: LLMClient, repo: Path, rel_path: str, file_info
                 language="java",
                 class_source=class_source,
             )
-            if not _is_embeddable_java_block(block):
-                print(f"[WARN] {class_name}.{method['name']}: bloque descartado (llaves desbalanceadas o estructura inválida)")
+            if not _is_embeddable_java_block(block, class_name):
+                print(f"[WARN] {class_name}.{method['name']}: bloque descartado")
                 continue
+            names = re.findall(r'\bvoid\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(', block)
+            if any(n in seen_method_names for n in names):
+                continue
+            seen_method_names.update(names)
             blocks.append(block)
 
         if blocks:
@@ -332,6 +420,7 @@ def _build_java_test_file(class_name: str, blocks: list[str]) -> str:
         imports.append("import java.util.List;")
 
     header = "\n".join(imports) + f"\n\nclass {class_name}Test {{\n"
+
 
     indented_blocks = []
     for block in blocks:

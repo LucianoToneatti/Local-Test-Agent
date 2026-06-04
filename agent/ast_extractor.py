@@ -91,7 +91,6 @@ _JS_CONTROL_KEYWORDS = {
     'class', 'import', 'export', 'from', 'const', 'let', 'var', 'function',
 }
 
-
 def extract(files: list[str], repo_path: str) -> dict:
     """
     Extrae funciones, clases e imports de una lista de archivos .py/.js/.ts/.java.
@@ -415,11 +414,8 @@ def _extract_java_methods(class_source: str, class_lines: list[str], class_start
         return_type = match.group(2).strip()
         name = match.group(3)
 
-        # Filtrar palabras clave de control y nombres que no son métodos
         if name in _JAVA_CONTROL_KEYWORDS or return_type in _JAVA_CONTROL_KEYWORDS:
             continue
-        # El patrón ya exige [ \t]+ así que siempre hay indentación cuando hay match.
-        # Verificación extra: indentación mínima de 1 carácter (no puede ser top-level).
         if not match.group(1):
             continue
 
@@ -427,7 +423,6 @@ def _extract_java_methods(class_source: str, class_lines: list[str], class_start
         if local_lineno in seen:
             continue
 
-        # Verificar que sea una definición: { en la misma línea o en la siguiente
         match_line = class_lines[local_lineno - 1] if local_lineno <= len(class_lines) else ''
         next_line = class_lines[local_lineno] if local_lineno < len(class_lines) else ''
         if '{' not in match_line and not next_line.strip().startswith('{'):
@@ -459,7 +454,6 @@ def _parse_java_params(params_str: str) -> list[str]:
     params = []
     for p in params_str.split(','):
         parts = p.strip().split()
-        # Último token es el nombre del parámetro (el resto es el tipo)
         if parts:
             name = parts[-1].lstrip('.')
             if name and re.match(r'^[a-zA-Z_$]', name):

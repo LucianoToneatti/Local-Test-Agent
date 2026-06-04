@@ -14,7 +14,7 @@ from agent import report_generator, terminal_ui
 from agent.ast_extractor import extract
 from agent.autocorrector import autocorrect
 from agent.integration_generator import generate as generate_integration
-from agent.llm_client import LLMClient, OllamaConnectionError
+from agent.llm_client import OllamaConnectionError, create_client
 from agent.repo_explorer import explore
 from agent.test_generator import generate as generate_unit
 from agent.test_runner import run as run_tests
@@ -26,13 +26,25 @@ def main() -> None:
     terminal_ui.print_title("Local-Test-Agent", "v1.0")
 
     parser = argparse.ArgumentParser(
-        description="Genera tests unitarios con un LLM local para los .py del repositorio dado."
+        description="Genera tests unitarios con un LLM para los archivos del repositorio dado."
     )
     parser.add_argument(
         "--repo",
         required=True,
         metavar="DIR",
-        help="Carpeta con los archivos .py a testear.",
+        help="Carpeta con los archivos a testear.",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=["local", "groq"],
+        default="local",
+        help="Proveedor LLM: 'local' usa Ollama (default), 'groq' usa Groq cloud.",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        metavar="NOMBRE",
+        help="Nombre del modelo a usar. Default: deepseek-coder:6.7b (local) o llama-3.1-8b-instant (groq).",
     )
     args = parser.parse_args()
 
@@ -41,10 +53,18 @@ def main() -> None:
         terminal_ui.print_error(f"'{repo}' no es un directorio valido.")
         sys.exit(1)
 
-    client = LLMClient()
+    client = create_client(args.provider, args.model)
     if not client.is_available():
-        terminal_ui.print_error(f"Ollama no disponible o modelo '{client.model}' no encontrado.")
-        print("    Ejecuta: ollama serve && ollama pull deepseek-coder:6.7b")
+        if args.provider == "groq":
+            terminal_ui.print_error(
+                "GROQ_API_KEY no encontrada. "
+                "Exportá la variable de entorno antes de usar --provider groq."
+            )
+        else:
+            terminal_ui.print_error(
+                f"Ollama no disponible o modelo '{client.model}' no encontrado."
+            )
+            print("    Ejecuta: ollama serve && ollama pull deepseek-coder:6.7b")
         sys.exit(1)
 
     terminal_ui.print_step(f"Analizando repositorio '{repo.name}'...")
@@ -52,11 +72,11 @@ def main() -> None:
 
     total_files = len(ast_result)
     terminal_ui.print_step(f"Generando tests unitarios ({total_files} archivo(s))...")
-    generate_unit(str(repo), ast_result, progress_callback=terminal_ui.print_progress)
+    generate_unit(str(repo), ast_result, progress_callback=terminal_ui.print_progress, client=client)
     terminal_ui.print_ok("tests_generados/unit/\n")
 
     terminal_ui.print_step("Generando tests de integracion...")
-    generate_integration(str(repo), ast_result, progress_callback=terminal_ui.print_progress)
+    generate_integration(str(repo), ast_result, progress_callback=terminal_ui.print_progress, client=client)
     terminal_ui.print_ok("tests_generados/integration/\n")
 
     terminal_ui.print_step("Ejecutando tests generados...")
@@ -73,7 +93,7 @@ def main() -> None:
 
         if failed > 0:
             terminal_ui.print_step(f"Autocorrigiendo {failed} test(s) fallido(s) (hasta 3 intentos)...")
-            final = autocorrect(results, str(repo))
+            final = autocorrect(results, str(repo), client=client)
             resolved = sum(1 for v in final.values() if v["status"] == "passed")
             unresolved = sum(1 for v in final.values() if v["status"] == "sin_resolver")
             terminal_ui.print_ok(f"Autocorreccion: {resolved} resuelto(s), {unresolved} sin resolver\n")

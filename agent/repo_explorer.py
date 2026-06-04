@@ -1,8 +1,8 @@
 """
-Explorador de repositorios Python y JavaScript/TypeScript.
+Explorador de repositorios Python, JavaScript/TypeScript y Java.
 
 Recorre recursivamente un directorio y devuelve la lista de rutas relativas
-de todos los archivos .py, .js y .ts, ignorando directorios del sistema.
+de todos los archivos .py, .js, .ts y .java, ignorando directorios del sistema.
 """
 
 import os

@@ -68,10 +68,14 @@ pip install pytest pytest-cov requests
 
 ## Uso
 
-# Activar el entorno virtual (requerido)
+Activá el entorno virtual antes de correr el agente:
+
 ```bash
 source venv/bin/activate
 ```
+
+### Proveedor local (Ollama, default)
+
 ```bash
 python3 agent.py --repo ./ruta/al/repo
 ```
@@ -82,6 +86,39 @@ Podés usar rutas relativas, absolutas o con `~`:
 python3 agent.py --repo ./examples
 python3 agent.py --repo ~/codigo-para-testear
 python3 agent.py --repo /home/usuario/proyectos/mi-app
+```
+
+### Proveedor cloud (Groq)
+
+```bash
+export GROQ_API_KEY="tu-key"
+python3 agent.py --repo ./examples --provider groq
+```
+
+Para usar un modelo específico de Groq:
+
+```bash
+python3 agent.py --repo ./examples --provider groq --model llama-3.3-70b-versatile
+```
+
+Si `GROQ_API_KEY` no está seteada, el agente lo indica y termina:
+
+```
+[ERROR] GROQ_API_KEY no encontrada. Exportá la variable de entorno antes de usar --provider groq.
+```
+
+Podés obtener una API key gratuita en [console.groq.com](https://console.groq.com).
+
+**Ejemplo de salida con Groq (./examples):**
+
+```
++--- Resumen final ---+
+  Passed:       40
+  Failed:       0
+  Sin resolver: 4
+  Total:        44
+  Cobertura:    100%
+  Tiempo:       1m 11s
 ```
 
 ### Salida esperada

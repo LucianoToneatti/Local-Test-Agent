@@ -20,7 +20,7 @@ _TEMPLATE = CorrectionPromptTemplate()
 _MAX_ATTEMPTS = 3
 
 
-def autocorrect(results: dict, repo_path: str) -> dict:
+def autocorrect(results: dict, repo_path: str, client=None) -> dict:
     """
     Corrige tests fallidos hasta 3 intentos por test_id.
 
@@ -28,6 +28,7 @@ def autocorrect(results: dict, repo_path: str) -> dict:
         results: Dict producido por test_runner.run().
                  Formato: {test_id: {'status': str, 'traceback': str|None}}
         repo_path: Ruta al repositorio analizado.
+        client: Cliente LLM a usar. Si es None crea OllamaClient() por defecto.
 
     Returns:
         Dict con mismo formato que results, más campo 'attempts' en tests corregidos.
@@ -36,7 +37,8 @@ def autocorrect(results: dict, repo_path: str) -> dict:
         de cada intento (traceback recibido + código generado por el LLM), en orden.
         No modifica tests que ya tenían status 'passed'.
     """
-    client = LLMClient()
+    if client is None:
+        client = LLMClient()
     final = dict(results)
 
     for test_id, info in results.items():
