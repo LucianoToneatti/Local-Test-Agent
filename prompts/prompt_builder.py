@@ -328,6 +328,74 @@ class IntegrationPromptTemplate(PromptTemplate):
         return BuiltPrompt(system=self._SYSTEM, user=user)
 
 
+class JavaIntegrationPromptTemplate(PromptTemplate):
+    """
+    Template para generar tests de integración entre pares de clases Java.
+
+    Se llama una vez por par (ClaseA usa ClaseB). Pasa al LLM:
+    (1) código fuente completo de ClaseA, (2) firmas de métodos de ClaseB.
+    El generador agrega el wrapper de clase e imports — el LLM genera solo @Test methods.
+    """
+
+    language = "java_integration"
+
+    _SYSTEM = (
+        "You are a Java integration test-writing machine. "
+        "You output ONLY raw Java test method bodies. Nothing else.\n"
+        "ABSOLUTE RULES — never break these:\n"
+        "- NO markdown. Never use triple backticks (```) under any circumstances.\n"
+        "- NO explanations, NO introductory sentences.\n"
+        "- Do NOT output import statements or class declarations.\n"
+        "- Do NOT use long literals (e.g. 100L). Use int or double literals only.\n"
+        "- Output ONLY @Test method(s) that can be pasted inside a JUnit 5 test class body.\n"
+        "- Use JUnit 5 assertions: assertEquals, assertTrue, assertFalse, assertThrows, etc.\n"
+        "- NEVER use JUnit 4 syntax. For exceptions always use assertThrows(), never @Test(expected=...).\n"
+        "- NEVER use Int. — always use Integer. (e.g. Integer.MIN_VALUE, Integer.MAX_VALUE).\n"
+        "- Do NOT add any comments inside the test methods. No // lines, no /* */ blocks.\n"
+        "- Never use DELTA or delta as a variable. For floating-point use assertEquals(expected, actual, 0.001).\n"
+        "- No mocks. Tests must exercise the REAL interaction between ClassA and ClassB.\n"
+        "- Instantiate ClassA inside each @Test method. Do NOT use @BeforeEach fields.\n"
+        "- Never reference variables not declared in the same @Test method.\n"
+        "- Cover: happy path and edge cases involving the interaction between the two classes.\n"
+        "- Start your response directly with '@Test'."
+    )
+
+    _USER_TEMPLATE = (
+        "Write JUnit 5 integration tests for ClassA that uses ClassB internally.\n\n"
+        "# ClassA (the class under test): {class_a_name}\n"
+        "{class_a_source}\n\n"
+        "# ClassB method signatures (used internally by ClassA): {class_b_name}\n"
+        "{class_b_sigs}\n\n"
+        "STRICT RULES:\n"
+        "1. Test ONLY methods from {class_a_name} that internally use {class_b_name}.\n"
+        "2. Instantiate {class_a_name} inside each @Test method: "
+        "{class_a_name} obj = new {class_a_name}();\n"
+        "3. No mocks — let {class_a_name} call {class_b_name} for real.\n"
+        "4. Assert with concrete expected values.\n"
+        "5. Do NOT write tests for {class_b_name} methods in isolation.\n"
+        "6. Do NOT use Assertions.assertEquals — use assertEquals directly.\n\n"
+        "OUTPUT RULES: output ONLY @Test void methods. "
+        "No class declaration, no imports, no markdown. "
+        "Start your response directly with '@Test'."
+    )
+
+    def build(
+        self,
+        code: str,
+        function_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+        class_name: Optional[str] = None,
+        module_b_sigs: str = "",
+    ) -> BuiltPrompt:
+        user = self._USER_TEMPLATE.format(
+            class_a_name=module_name or "ClassA",
+            class_a_source=code.strip(),
+            class_b_name=class_name or "ClassB",
+            class_b_sigs=module_b_sigs or "(no method signatures available)",
+        )
+        return BuiltPrompt(system=self._SYSTEM, user=user)
+
+
 class JsIntegrationPromptTemplate(PromptTemplate):
     """
     Template para generar tests de integración entre pares de módulos JavaScript/TypeScript.
@@ -448,6 +516,7 @@ _REGISTRY: dict[str, PromptTemplate] = {
     "java": JavaPromptTemplate(),
     "python_integration": IntegrationPromptTemplate(),
     "javascript_integration": JsIntegrationPromptTemplate(),
+    "java_integration": JavaIntegrationPromptTemplate(),
     "python_correction": CorrectionPromptTemplate(),
 }
 

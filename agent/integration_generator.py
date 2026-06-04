@@ -1,27 +1,38 @@
 """
-Generador de tests de integración para repositorios Python y JavaScript/TypeScript.
+Generador de tests de integración para repositorios Python, JavaScript/TypeScript y Java.
 
-Recibe el dict producido por ast_extractor.extract(), detecta pares de módulos
-relacionados por imports, llama al LLM una vez por par y escribe los tests.
+Recibe el dict producido por ast_extractor.extract(), detecta pares de módulos/clases
+relacionados, llama al LLM una vez por par y escribe los tests.
 
 Python: valida con ast.parse() y reintenta una vez si el código no es válido.
 JS/TS: valida presencia de bloques test/describe y reintenta una vez si no los hay.
+Java: detecta pares por uso directo en el código fuente (no por imports), valida
+      presencia de @Test y reintenta una vez. Escribe estructura Maven compatible.
 """
 
 import ast
+import re
+import shutil
 from pathlib import Path
 from typing import Optional
 
 from agent.llm_client import LLMClient
+from agent.test_generator import _compile_and_fix_java
 from prompts.prompt_builder import (
     IntegrationPromptTemplate,
+    JavaIntegrationPromptTemplate,
     JsIntegrationPromptTemplate,
     clean_response,
 )
 
 OUTPUT_DIR = Path("tests_generados/integration")
+_JAVA_INT_TEST_DIR = OUTPUT_DIR / "src" / "test" / "java"
+_JAVA_INT_MAIN_DIR = OUTPUT_DIR / "src" / "main" / "java"
+
 _TEMPLATE = IntegrationPromptTemplate()
 _JS_TEMPLATE = JsIntegrationPromptTemplate()
+_JAVA_INT_TEMPLATE = JavaIntegrationPromptTemplate()
+
 _JS_EXTENSIONS = {".js", ".ts", ".mjs"}
 
 
@@ -44,7 +55,8 @@ def generate(repo_path: str, ast_result: dict, progress_callback=None, client=No
 
     pairs = _find_pairs(ast_result)
     js_pairs = _find_js_pairs(ast_result)
-    total = len(pairs) + len(js_pairs)
+    java_pairs = _find_java_pairs(ast_result, repo)
+    total = len(pairs) + len(js_pairs) + len(java_pairs)
     idx = 0
 
     for (a_path, b_path) in pairs:
@@ -71,6 +83,23 @@ def generate(repo_path: str, ast_result: dict, progress_callback=None, client=No
 
     if js_pairs:
         _write_js_jest_config(repo)
+
+    for (a_path, b_path) in java_pairs:
+        idx += 1
+        class_a = _get_java_class_name(ast_result, a_path)
+        class_b = _get_java_class_name(ast_result, b_path)
+        code = _generate_java_pair_test(client, repo, a_path, b_path, ast_result)
+        _JAVA_INT_TEST_DIR.mkdir(parents=True, exist_ok=True)
+        out_file = _JAVA_INT_TEST_DIR / f"{class_a}{class_b}IntegrationTest.java"
+        out_file.write_text(code)
+        if progress_callback:
+            progress_callback(idx, total, f"{class_a}+{class_b}")
+
+    if java_pairs:
+        _copy_java_sources_for_integration(repo)
+        _write_java_integration_pom()
+        if shutil.which("mvn"):
+            _compile_and_fix_java(client, OUTPUT_DIR)
 
 
 def _find_js_pairs(ast_result: dict) -> list[tuple[str, str]]:
@@ -245,6 +274,168 @@ def _write_conftest(repo: Path) -> None:
         f'sys.path.insert(0, "{repo}")\n'
     )
     (OUTPUT_DIR / "conftest.py").write_text(content)
+
+
+def _find_java_pairs(ast_result: dict, repo: Path) -> list[tuple[str, str]]:
+    """
+    Detecta pares (a_path, b_path) de archivos Java donde A usa la clase de B.
+
+    En Java, las clases del mismo paquete no necesitan imports entre sí. La relación
+    se detecta buscando el nombre de ClaseB como palabra completa en el código de ClaseA.
+    Cubre: instanciación (new ClaseB()), declaraciones de tipo (ClaseB var =) y
+    llamadas estáticas (ClaseB.metodo()).
+    """
+    java_files = {
+        rel: info
+        for rel, info in ast_result.items()
+        if rel.endswith(".java")
+    }
+    class_names: dict[str, str] = {}
+    for rel, info in java_files.items():
+        classes = info.get("classes", [])
+        if classes:
+            class_names[rel] = classes[0]["name"]
+
+    pairs = []
+    for a_path, class_a in class_names.items():
+        source = _read_source(repo, a_path)
+        if source is None:
+            continue
+        for b_path, class_b in class_names.items():
+            if a_path == b_path:
+                continue
+            if re.search(rf"\b{re.escape(class_b)}\b", source):
+                pairs.append((a_path, b_path))
+    return pairs
+
+
+def _get_java_class_name(ast_result: dict, rel_path: str) -> str:
+    """Retorna el nombre de la primera clase del archivo, o el stem del path."""
+    classes = ast_result.get(rel_path, {}).get("classes", [])
+    if classes:
+        return classes[0]["name"]
+    return Path(rel_path).stem
+
+
+def _format_java_method_sigs(file_info: dict) -> str:
+    """Formatea las firmas de los métodos públicos de las clases del archivo."""
+    lines = []
+    for cls in file_info.get("classes", []):
+        for method in cls.get("methods", []):
+            params = ", ".join(method.get("params", []))
+            lines.append(f"public ... {method['name']}({params}) {{ ... }}")
+    return "\n".join(lines)
+
+
+def _generate_java_pair_test(
+    client: LLMClient,
+    repo: Path,
+    a_path: str,
+    b_path: str,
+    ast_result: dict,
+) -> str:
+    """
+    Genera el código completo del archivo *IntegrationTest.java para el par (A usa B).
+    Reintenta una vez si el output del LLM no contiene @Test.
+    """
+    a_source = _read_source(repo, a_path)
+    if a_source is None:
+        class_a = _get_java_class_name(ast_result, a_path)
+        class_b = _get_java_class_name(ast_result, b_path)
+        return f"// ERROR: no se pudo leer {a_path}\n"
+
+    class_a = _get_java_class_name(ast_result, a_path)
+    class_b = _get_java_class_name(ast_result, b_path)
+    b_sigs = _format_java_method_sigs(ast_result.get(b_path, {}))
+
+    for attempt in range(2):
+        prompt = _JAVA_INT_TEMPLATE.build(
+            code=a_source,
+            module_name=class_a,
+            class_name=class_b,
+            module_b_sigs=b_sigs,
+        )
+        raw = client.generate(prompt.user, system=prompt.system)
+        methods_block = clean_response(raw, language="java")
+        if "@Test" in methods_block and "void" in methods_block:
+            return _build_java_integration_test_file(class_a, class_b, methods_block)
+        if attempt == 0:
+            continue
+
+    return f"// ERROR: no se pudo generar test de integración para {class_a}+{class_b}\n"
+
+
+def _build_java_integration_test_file(class_a: str, class_b: str, methods_block: str) -> str:
+    """Envuelve los métodos @Test generados en una clase JUnit 5 completa."""
+    imports = [
+        "import org.junit.jupiter.api.Test;",
+        "import org.junit.jupiter.api.Assertions;",
+        "import static org.junit.jupiter.api.Assertions.*;",
+    ]
+    if "ArrayList" in methods_block:
+        imports.append("import java.util.ArrayList;")
+    if "Arrays." in methods_block:
+        imports.append("import java.util.Arrays;")
+    if re.search(r"\bList[<\s]", methods_block):
+        imports.append("import java.util.List;")
+
+    header = "\n".join(imports) + f"\n\nclass {class_a}{class_b}IntegrationTest {{\n"
+    indented = "\n".join(
+        "    " + line if line.strip() else line
+        for line in methods_block.splitlines()
+    )
+    return header + "\n" + indented + "\n}\n"
+
+
+def _write_java_integration_pom() -> None:
+    """Escribe pom.xml con JUnit 5 en tests_generados/integration/ si no existe."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    pom_path = OUTPUT_DIR / "pom.xml"
+    if pom_path.exists():
+        return
+    pom_content = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<project xmlns="http://maven.apache.org/POM/4.0.0"\n'
+        '         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"\n'
+        '         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 '
+        'http://maven.apache.org/xsd/maven-4.0.0.xsd">\n'
+        '    <modelVersion>4.0.0</modelVersion>\n'
+        '    <groupId>local.test.agent</groupId>\n'
+        '    <artifactId>generated-integration-tests</artifactId>\n'
+        '    <version>1.0-SNAPSHOT</version>\n'
+        '    <properties>\n'
+        '        <maven.compiler.source>11</maven.compiler.source>\n'
+        '        <maven.compiler.target>11</maven.compiler.target>\n'
+        '        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>\n'
+        '    </properties>\n'
+        '    <dependencies>\n'
+        '        <dependency>\n'
+        '            <groupId>org.junit.jupiter</groupId>\n'
+        '            <artifactId>junit-jupiter</artifactId>\n'
+        '            <version>5.10.0</version>\n'
+        '            <scope>test</scope>\n'
+        '        </dependency>\n'
+        '    </dependencies>\n'
+        '    <build>\n'
+        '        <plugins>\n'
+        '            <plugin>\n'
+        '                <groupId>org.apache.maven.plugins</groupId>\n'
+        '                <artifactId>maven-surefire-plugin</artifactId>\n'
+        '                <version>3.1.2</version>\n'
+        '            </plugin>\n'
+        '        </plugins>\n'
+        '    </build>\n'
+        '</project>\n'
+    )
+    pom_path.write_text(pom_content)
+
+
+def _copy_java_sources_for_integration(repo: Path) -> None:
+    """Copia los .java del repo a src/main/java/ para que Maven los compile."""
+    _JAVA_INT_MAIN_DIR.mkdir(parents=True, exist_ok=True)
+    for java_file in repo.rglob("*.java"):
+        dest = _JAVA_INT_MAIN_DIR / java_file.name
+        shutil.copy2(java_file, dest)
 
 
 if __name__ == "__main__":
