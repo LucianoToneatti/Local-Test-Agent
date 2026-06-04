@@ -1019,3 +1019,134 @@ En Java la convención es un archivo por clase pública, pero nada impide múlti
 - Los imports Java en los tests generados son fijos (`junit-jupiter`, `Assertions.*`). Si la clase bajo test requiere imports adicionales (ej. `java.util.List`), el LLM los agrega en el output y el pipeline los elimina con `strip_imports=True`. Esto puede causar `NameError` en compilación si el test necesita esos tipos.
 - Maven descarga dependencias en el primer run (~50 MB de JUnit 5 y Surefire). En entornos offline, el primer run fallará; los runs subsiguientes usan la caché local de Maven (`~/.m2/repository`).
 - No hay soporte para packages Java: los archivos generados no tienen `package` declaration, lo que funciona para clases simples pero puede causar conflictos en proyectos con estructura de paquetes.
+
+---
+
+## HU-15 — Tests de integración Java (JUnit 5)
+
+### Qué se implementó
+
+- **`examples_java/Estadistica.java`**: nueva clase que usa `Calculadora` por composición interna (`promedio`, `productoTotal`, `todosPares`). Sirve como ejemplo de referencia para validar el pipeline de integración Java, análogo a `examples/estadistica.py` para Python.
+- **`prompts/prompt_builder.py`**: nueva clase `JavaIntegrationPromptTemplate` registrada como `"java_integration"`. Genera solo métodos `@Test` sin wrapper ni imports — misma filosofía que `JavaPromptTemplate`. El system prompt exige tests de interacción real entre las dos clases, sin mocks, con valores concretos esperados.
+- **`agent/integration_generator.py`**: extensión completa para Java:
+  - `_find_java_pairs(ast_result, repo)`: detecta pares (ClaseA, ClaseB) buscando el nombre de ClaseB como palabra completa (`\bClaseB\b`) en el código fuente de ClaseA. A diferencia de Python y JS, donde el grafo de dependencias lo provee el campo `imports` del `ast_result`, Java en mismo paquete no usa `import` entre clases. La detección por texto cubre instanciación (`new Calculadora()`), declaración de campo (`Calculadora calc`) y llamadas estáticas (`Calculadora.metodo()`).
+  - `_generate_java_pair_test`: llama al LLM, valida presencia de `@Test` + `void`, reintenta una vez.
+  - `_build_java_integration_test_file`: envuelve los métodos generados en clase JUnit 5 completa con imports dinámicos (agrega `ArrayList`, `List`, `Arrays` si aparecen en el código).
+  - `_write_java_integration_pom`: genera `pom.xml` idéntico al de tests unitarios en `tests_generados/integration/`.
+  - `_copy_java_sources_for_integration`: copia los `.java` del repo a `tests_generados/integration/src/main/java/` para que Maven los compile junto a los tests.
+  - `_compile_and_fix_java` reutilizado desde `test_generator.py` sin modificación — ya estaba parametrizado por `maven_root: Path`, por lo que apuntar a `tests_generados/integration/` en lugar de `tests_generados/unit/` no requiere ningún cambio.
+- Convención de archivos de salida: `tests_generados/integration/src/test/java/{ClaseA}{ClaseB}IntegrationTest.java`.
+
+### Decisión clave — detección por uso en lugar de imports
+
+En Python y JS, el grafo de dependencias se extrae de los `import`/`require` del código y queda almacenado en el campo `imports` del `ast_result`. En Java, las clases del mismo paquete son directamente visibles entre sí sin ninguna declaración `import`. El `ast_extractor` deja `imports: []` para todos los archivos Java.
+
+La solución es leer el código fuente de ClaseA y buscar el nombre de ClaseB como token de palabra completa. Esta heurística es conservadora (solo detecta uso explícito del nombre) pero suficientemente precisa para el caso de uso del agente: si ClaseB aparece en el cuerpo de ClaseA, es porque ClaseA la instancia, declara como tipo de campo, o llama como clase estática.
+
+La alternativa (extender `ast_extractor` para inferir dependencias Java en tiempo de parseo) requeriría conocer los nombres de todas las clases del repo en el momento de parsear cada archivo, lo que implicaría un segundo pasaje sobre todos los archivos. El enfoque actual resuelve esto en `_find_java_pairs`, que tiene acceso tanto al `ast_result` completo como al `repo`.
+
+### Reutilización de _compile_and_fix_java
+
+La función del ciclo de compilación-corrección (implementada en HU-14 para tests unitarios) fue reutilizada sin modificaciones para los tests de integración. La firma `_compile_and_fix_java(client, maven_root: Path)` no tiene dependencias de módulo: recibe el directorio raíz del proyecto Maven como parámetro y opera sobre él. Cambiar de `tests_generados/unit/` a `tests_generados/integration/` es solo pasar un `Path` distinto. Esta parametrización previa es un ejemplo de cómo un diseño orientado a datos (pasar la raíz como parámetro en lugar de hardcodearla) elimina el costo de extensión futura.
+
+### Estructura de salida
+
+```
+tests_generados/integration/
+├── pom.xml
+└── src/
+    ├── main/java/
+    │   ├── Estadistica.java   ← copia del repo
+    │   ├── Calculadora.java
+    │   └── Conversor.java
+    └── test/java/
+        └── EstadisticaCalculadoraIntegrationTest.java
+```
+
+### Conceptos teóricos aplicados
+
+- **Detección de dependencias por análisis de texto**: alternativa al grafo de imports cuando el lenguaje no tiene declaraciones de dependencia explícitas entre unidades del mismo paquete.
+- **Reutilización por parametrización**: una función con comportamiento dependiente de su entorno (directorio Maven) es reutilizable sin modificación si ese entorno se inyecta como parámetro en lugar de resolverse internamente.
+- **Consistencia de interfaz entre lenguajes**: el pipeline de integración Java sigue la misma estructura conceptual que Python (par A→B, código de A + firmas de B al LLM, archivo de test por par) aunque los mecanismos de detección y escritura son específicos del lenguaje.
+
+### Deuda técnica / pendientes
+
+- La detección por `\bNombreClase\b` puede producir falsos positivos si una clase tiene el mismo nombre que una variable o constante de otro contexto. Para repositorios reales esto es poco frecuente; para v2 se podría refinar analizando el contexto de aparición.
+- Los tests de integración Java no pasan por el ciclo de autocorrección (igual que los unitarios Java).
+
+---
+
+## HU-16 — Diagnóstico de fallos (clasificador posible_bug)
+
+### Qué se implementó
+
+- **`agent/autocorrector.py`**: clasificador previo a la corrección. Antes de intentar corregir un test fallido, `autocorrect()` llama a `_classify_error(traceback)` que retorna `"posible_bug"` o `"corregible"`. Los tests clasificados como `posible_bug` se registran con `_mark_as_possible_bug()` sin llamar al LLM ni consumir intentos.
+- **`agent/report_generator.py`**: nueva sección `## Posible bug detectado` en el reporte, con test_id + expected + actual por cada caso. Nueva fila `| Posible bug | Z |` en la tabla de resumen.
+- **`agent/terminal_ui.py`**: parámetro `possible_bugs=0` en `print_summary`. Nueva línea `Posible bug: Z` en el output final (rojo si > 0). El total incluye `possible_bugs`.
+- **`agent.py`**: cuenta `posible_bug` en el dict final y lo pasa a `print_summary` y al mensaje de autocorrección.
+
+### Lógica del clasificador
+
+`_classify_error(traceback)` devuelve `"posible_bug"` cuando el traceback indica una discrepancia concreta de valores (el test corrió pero los valores no coincidieron), y `"corregible"` en cualquier otro caso (el test tiene un error estructural que puede corregirse).
+
+**Condición de posible_bug:** el traceback contiene `AssertionError` **o** el patrón JUnit `expected: <X> but was: <Y>` (con ángulos), **y** `_extract_assert_values` puede extraer dos valores distintos.
+
+**Patrones reconocidos por `_extract_assert_values`:**
+
+| Patrón | Ejemplo | Origen |
+|---|---|---|
+| `^E\s+assert X == Y$` (multiline) | `E       assert 12 == 11` | pytest (formato real) |
+| `AssertionError: assert X == Y` | `AssertionError: assert 4 == 5` | pytest inline |
+| `expected: <X> but was: <Y>` | `expected: <4> but was: <5>` | JUnit |
+| `Obtained: X\nExpected: Y` | pytest.approx | pytest con approx |
+| `AssertionError: X != Y` | `AssertionError: 4 != 5` | genérico |
+
+### Bug crítico del clasificador y su diagnóstico
+
+La primera implementación marcaba todos los AssertionError como `corregible` en lugar de `posible_bug`. El diagnóstico se hizo en dos pasos:
+
+1. Se agregó `print(repr(traceback))` al inicio de `_classify_error` y se ejecutó el agente contra `examples/` con un bug deliberado en `calculadora.py` (`sumar` retornaba `a + b + 1`).
+
+2. El string real que llega desde `test_runner.run()` es:
+   ```
+   'def test_sumar_positive():\n>       assert sumar(5, 6) == 11\nE       assert 12 == 11\nE        +  where 12 = sumar(5, 6)\n\ntests_generados/unit/test_calculadora.py:9: AssertionError'
+   ```
+
+El problema: el patrón original buscaba `AssertionError: assert X == Y` (con los dos puntos, en la misma línea). Pero pytest escribe los valores en una línea separada que empieza con `E       assert 12 == 11`, y `AssertionError` aparece al final como sufijo de la ruta del archivo (sin valores). El regex nunca matcheaba.
+
+La corrección: agregar `^E\s+assert\s+(.+?)\s*==\s*(.+)$` con flag `re.MULTILINE` como primer patrón de la lista. Este patrón captura exactamente la línea de detalle que pytest escribe.
+
+### Dato de diseño — qué se clasifica como posible_bug vs. corregible
+
+| Error | Clasificación | Razonamiento |
+|---|---|---|
+| `E       assert 12 == 11` | posible_bug | El test corrió y la función devolvió un valor concreto diferente al esperado |
+| `AssertionError` (sin valores) | corregible | El test puede tener un `assert False` o un error lógico en la propia aserción |
+| `NameError: name 'suma' is not defined` | corregible | El test tiene un error estructural (import incorrecto, nombre erróneo) |
+| `ImportError` | corregible | El test no puede importar el módulo — problema del test, no del código bajo test |
+| `TypeError` | corregible | El test llama a una función con tipos incorrectos |
+| `expected: <4> but was: <5>` | posible_bug | Formato JUnit, misma semántica que el patrón pytest |
+
+### Modelo de datos del status posible_bug
+
+```python
+{
+    "status": "posible_bug",
+    "traceback": "...",   # traceback completo original
+    "expected": "11",     # valor extraído (puede ser None si no se parseó)
+    "actual": "12",       # valor extraído
+}
+```
+
+No tiene campo `attempts` (no se realizó ningún intento de corrección).
+
+### Conceptos teóricos aplicados
+
+- **Clasificación antes de corrección**: en lugar de tratar todos los fallos como "el test está mal", el agente distingue entre "el test tiene un error corregible" y "el test detectó un comportamiento inesperado del código". Esta distinción es el primer paso hacia análisis de causa raíz automatizado.
+- **Diagnóstico por inspección del string real**: el bug del clasificador se encontró rápidamente al imprimir `repr(traceback)` — la representación exacta del string reveló que los valores y el `AssertionError` están en líneas distintas, no en una sola línea como el patrón asumía. La lección: cuando un clasificador basado en regex no funciona, el primer paso es ver exactamente qué string está llegando.
+- **Guardrail conservador**: el clasificador solo marca como `posible_bug` cuando puede extraer dos valores distintos. Si no puede parsear los valores (AssertionError sin detalle), clasifica como `corregible`. Esto es preferible a marcar falsos positivos como bugs del código cuando en realidad son bugs del test.
+
+### Deuda técnica / pendientes
+
+- El clasificador opera solo sobre Python y JUnit. Tests JS con `expect(x).toBe(y)` que fallan producen un traceback con formato Jest diferente, que actualmente queda como `corregible`.
+- Los valores `expected` y `actual` se almacenan como strings tal como aparecen en el traceback (pueden ser `"12"`, `"[1, 2, 3]"`, `"25.0 ± 0.25"`). No hay normalización de tipos.
