@@ -1,27 +1,35 @@
 """
-Cliente para el modelo LLM local servido por Ollama.
+Clientes LLM para el agente: Ollama (local) y Groq (cloud).
 
-Ollama expone una API REST en http://localhost:11434.
-El endpoint /api/generate recibe un prompt y devuelve la respuesta
-del modelo de forma streaming (un JSON por línea) o completa.
+OllamaClient conecta con la API REST local de Ollama.
+GroqClient usa la API de Groq con formato OpenAI chat completions.
+LLMClient es alias de OllamaClient para compatibilidad con el código existente.
 """
 
 import json
+import os
+import time
 import urllib.request
 import urllib.error
 from typing import Optional
 
 
 OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_MODEL = "deepseek-coder:6.7b"
+DEFAULT_OLLAMA_MODEL = "deepseek-coder:6.7b"
+DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 class OllamaConnectionError(Exception):
     pass
 
 
-class LLMClient:
-    def __init__(self, model: str = DEFAULT_MODEL, base_url: str = OLLAMA_BASE_URL):
+class GroqAPIError(Exception):
+    pass
+
+
+class OllamaClient:
+    def __init__(self, model: str = DEFAULT_OLLAMA_MODEL, base_url: str = OLLAMA_BASE_URL):
         self.model = model
         self.base_url = base_url.rstrip("/")
 
@@ -72,8 +80,74 @@ class LLMClient:
             return False
 
 
+class GroqClient:
+    def __init__(self, model: str = DEFAULT_GROQ_MODEL):
+        self.model = model
+
+    def generate(self, prompt: str, system: Optional[str] = None) -> str:
+        """Envía prompt a Groq usando el formato OpenAI chat completions."""
+        api_key = os.environ.get("GROQ_API_KEY")
+        if not api_key:
+            raise GroqAPIError(
+                "GROQ_API_KEY no encontrada. "
+                "Exportá la variable de entorno antes de usar --provider groq."
+            )
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {"model": self.model, "messages": messages}
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            GROQ_API_URL,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": "Mozilla/5.0",
+            },
+            method="POST",
+        )
+
+        last_exc: Exception = GroqAPIError("sin intentos")
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req) as resp:
+                    body = resp.read().decode("utf-8")
+                    result = json.loads(body)
+                    return result["choices"][0]["message"]["content"]
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    last_exc = GroqAPIError(f"Error de Groq API ({e.code}): rate limit")
+                    if attempt < 2:
+                        time.sleep(10)
+                        continue
+                body = e.read().decode("utf-8")
+                raise GroqAPIError(f"Error de Groq API ({e.code}): {body}") from e
+            except urllib.error.URLError as e:
+                raise GroqAPIError(f"No se pudo conectar con Groq: {e.reason}") from e
+        raise last_exc
+
+    def is_available(self) -> bool:
+        """Verifica que GROQ_API_KEY esté seteada en el entorno."""
+        return bool(os.environ.get("GROQ_API_KEY"))
+
+
+# Alias para compatibilidad con todo el código existente
+LLMClient = OllamaClient
+
+
+def create_client(provider: str, model: Optional[str] = None):
+    """Retorna el cliente LLM correcto según el proveedor elegido."""
+    if provider == "groq":
+        return GroqClient(model=model or DEFAULT_GROQ_MODEL)
+    return OllamaClient(model=model or DEFAULT_OLLAMA_MODEL)
+
+
 if __name__ == "__main__":
-    client = LLMClient()
+    client = OllamaClient()
 
     if not client.is_available():
         print(f"[!] Ollama no disponible o modelo '{client.model}' no encontrado.")

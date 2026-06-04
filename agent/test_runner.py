@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -37,7 +38,8 @@ def run(tests_dir: str, repo_path: str = "") -> tuple[dict, float | None]:
     """
     py_results, coverage_pct = _run_pytest(tests_dir, repo_path)
     js_results = _run_jest(tests_dir)
-    return {**py_results, **js_results}, coverage_pct
+    java_results = _run_maven(tests_dir)
+    return {**py_results, **js_results, **java_results}, coverage_pct
 
 
 def _run_pytest(tests_dir: str, repo_path: str = "") -> tuple[dict, float | None]:
@@ -122,6 +124,83 @@ def _run_jest(tests_dir: str) -> dict:
             cwd=str(cwd),
         )
         results.update(_parse_jest_output(result.stdout))
+
+    return results
+
+
+def _run_maven(tests_dir: str) -> dict:
+    """
+    Ejecuta mvn test sobre proyectos Maven encontrados dentro de tests_dir.
+
+    Busca pom.xml con rglob para soportar el caso en que el proyecto Maven
+    esté en un subdirectorio de tests_dir (ej. tests_generados/unit/).
+    """
+    tests_path = Path(tests_dir).resolve()
+
+    java_files = list(tests_path.rglob("*Test.java"))
+    if not java_files:
+        return {}
+
+    if not shutil.which("mvn"):
+        print("[INFO] Maven (mvn) no está instalado.")
+        print("    Los tests Java fueron generados pero no se pueden ejecutar.")
+        pom_files = list(tests_path.rglob("pom.xml"))
+        if pom_files:
+            print(f"    Una vez instalado, ejecutá: cd {pom_files[0].parent} && mvn test")
+        return {}
+
+    pom_files = list(tests_path.rglob("pom.xml"))
+    if not pom_files:
+        print("[ERROR] pom.xml no encontrado. Regenerá los tests.")
+        return {}
+
+    results = {}
+    for pom_path in pom_files:
+        maven_root = pom_path.parent
+        subprocess.run(
+            ["mvn", "test", "--batch-mode"],
+            text=True,
+            cwd=str(maven_root),
+        )
+        surefire_dir = maven_root / "target" / "surefire-reports"
+        results.update(_parse_surefire_reports(surefire_dir))
+
+    return results
+
+
+def _parse_surefire_reports(reports_dir: Path) -> dict:
+    """Parsea los XMLs de Surefire y devuelve {test_id: {status, traceback}}."""
+    results = {}
+    if not reports_dir.exists():
+        return results
+
+    for xml_file in reports_dir.glob("TEST-*.xml"):
+        try:
+            tree = ET.parse(xml_file)
+            root = tree.getroot()
+            suite_name = root.get("name", xml_file.stem)
+            for testcase in root.findall("testcase"):
+                method_name = testcase.get("name", "unknown")
+                test_id = f"{suite_name}::{method_name}"
+                failure = testcase.find("failure")
+                error = testcase.find("error")
+                skipped = testcase.find("skipped")
+                if skipped is not None:
+                    results[test_id] = {"status": "skipped", "traceback": None}
+                elif failure is not None:
+                    results[test_id] = {
+                        "status": "failed",
+                        "traceback": failure.get("message", failure.text or ""),
+                    }
+                elif error is not None:
+                    results[test_id] = {
+                        "status": "error",
+                        "traceback": error.get("message", error.text or ""),
+                    }
+                else:
+                    results[test_id] = {"status": "passed", "traceback": None}
+        except ET.ParseError:
+            pass
 
     return results
 

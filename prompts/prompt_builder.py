@@ -186,6 +186,56 @@ class JsPromptTemplate(PromptTemplate):
         return BuiltPrompt(system=self._SYSTEM, user=user)
 
 
+class JavaPromptTemplate(PromptTemplate):
+    """Template para generar tests JUnit 5 a partir de código Java."""
+
+    language = "java"
+
+    _SYSTEM = (
+        "You are a Java test-writing machine. "
+        "You output ONLY raw Java test method bodies. Nothing else.\n"
+        "ABSOLUTE RULES — never break these:\n"
+        "- NO markdown. Never use triple backticks (```) under any circumstances.\n"
+        "- NO explanations, NO introductory sentences.\n"
+        "- Do NOT output import statements or class declarations.\n"
+        "- Do NOT use long literals (e.g. 100L). Use int or double literals only.\n"
+        "- Output ONLY @Test method(s) that can be pasted inside a JUnit 5 test class body.\n"
+        "- Use JUnit 5 assertions: assertEquals, assertTrue, assertThrows, etc.\n"
+        "- NEVER use JUnit 4 syntax. For exceptions always use assertThrows(), never @Test(expected=...).\n"
+        "- NEVER use Int. — always use Integer. (e.g. Integer.MIN_VALUE, Integer.MAX_VALUE).\n"
+        "- Do NOT add any comments inside the test methods. No // lines, no /* */ blocks, no # characters.\n"
+        "- Never use DELTA or delta as a variable. For floating-point comparisons use assertEquals(expected, actual, 0.001) directly.\n"
+        "- Never pass null to methods that expect primitive types like int, double, float.\n"
+        "- Cover: happy path, edge case, and expected exception where applicable.\n"
+        "- Always use the exact class name as provided. Never instantiate a different class.\n"
+        "- Never use variables that are not declared within the same test method.\n"
+        "- Instantiate the class under test inside each test method."
+    )
+
+    _USER_TEMPLATE = (
+        "Write JUnit 5 @Test methods for this Java method:\n\n"
+        "{code}\n\n"
+        "Method under test: {function_name} (method of class {class_name})\n\n"
+        "OUTPUT RULES: output ONLY @Test method bodies. "
+        "No imports, no class declaration, no markdown, no backticks. "
+        "Start your response directly with '@Test'."
+    )
+
+    def build(
+        self,
+        code: str,
+        function_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+        class_name: Optional[str] = None,
+    ) -> BuiltPrompt:
+        user = self._USER_TEMPLATE.format(
+            code=code.strip(),
+            function_name=function_name or "el_metodo",
+            class_name=class_name or module_name or "LaClase",
+        )
+        return BuiltPrompt(system=self._SYSTEM, user=user)
+
+
 class IntegrationPromptTemplate(PromptTemplate):
     """
     Template para generar tests de integración entre pares de módulos Python.
@@ -367,6 +417,7 @@ class CorrectionPromptTemplate(PromptTemplate):
 _REGISTRY: dict[str, PromptTemplate] = {
     "python": PythonPromptTemplate(),
     "javascript": JsPromptTemplate(),
+    "java": JavaPromptTemplate(),
     "python_integration": IntegrationPromptTemplate(),
     "javascript_integration": JsIntegrationPromptTemplate(),
     "python_correction": CorrectionPromptTemplate(),
@@ -410,7 +461,7 @@ def clean_response(response: str, *, strip_imports: bool = False, language: str 
     """
     # Paso 1: extraer contenido de bloques markdown si existen
     blocks = re.findall(
-        r"```(?:python|javascript|js|ts|typescript)?\n?(.*?)```",
+        r"```(?:python|javascript|js|ts|typescript|java)?\n?(.*?)```",
         response,
         flags=re.DOTALL,
     )

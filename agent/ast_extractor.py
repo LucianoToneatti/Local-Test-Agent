@@ -1,10 +1,10 @@
 """
-Extractor AST/regex para repositorios Python y JavaScript/TypeScript.
+Extractor AST/regex para repositorios Python, JavaScript/TypeScript y Java.
 
-Para .py usa el módulo ast de stdlib. Para .js/.ts usa regex dado que
-no existe un parser de JS en la stdlib de Python.
+Para .py usa el módulo ast de stdlib. Para .js/.ts/.java usa regex dado que
+no existe un parser de esos lenguajes en la stdlib de Python.
 
-Devuelve en ambos casos un dict unificado con funciones top-level,
+Devuelve en todos los casos un dict unificado con funciones top-level,
 clases (con sus métodos) e imports del mismo repo.
 """
 
@@ -16,6 +16,7 @@ from pathlib import Path
 FRAGMENT_THRESHOLD = 200  # líneas máximas por fragmento
 
 _JS_EXTENSIONS = {'.js', '.ts', '.mjs'}
+_JAVA_EXTENSIONS = {'.java'}
 
 # ---------------------------------------------------------------------------
 # Patrones regex para JS/TS
@@ -62,6 +63,31 @@ _JS_CONTROL_KEYWORDS = {
     'class', 'import', 'export', 'from', 'const', 'let', 'var', 'function',
 }
 
+# ---------------------------------------------------------------------------
+# Patrones regex para Java
+# ---------------------------------------------------------------------------
+
+_JAVA_CLASS_DECL = re.compile(
+    r'^[ \t]*(?:(?:public|private|protected|abstract|final|static)\s+)*'
+    r'class\s+([A-Za-z_$][A-Za-z0-9_$]*)',
+    re.MULTILINE,
+)
+
+# Captura: [modificadores] [tipo_retorno] [nombreMétodo](
+# El tipo de retorno debe ir seguido de espacio para distinguirlo del nombre.
+_JAVA_METHOD_DECL = re.compile(
+    r'^[ \t]+'
+    r'(?:(?:public|private|protected|abstract|static|final|synchronized|native)\s+)*'
+    r'(?:[A-Za-z_$][A-Za-z0-9_$]*(?:<[^>]*>)?(?:\[\])*\s+)'
+    r'([A-Za-z_$][A-Za-z0-9_$]*)\s*\(',
+    re.MULTILINE,
+)
+
+_JAVA_CONTROL_KEYWORDS = {
+    'if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new',
+    'instanceof', 'assert', 'super', 'this', 'else',
+}
+
 
 def extract(files: list[str], repo_path: str) -> dict:
     """
@@ -79,8 +105,11 @@ def extract(files: list[str], repo_path: str) -> dict:
     result = {}
     for rel_path in files:
         abs_path = root / rel_path
-        if Path(rel_path).suffix in _JS_EXTENSIONS:
+        suffix = Path(rel_path).suffix
+        if suffix in _JS_EXTENSIONS:
             result[rel_path] = _parse_js_file(abs_path, repo_files_set, root)
+        elif suffix in _JAVA_EXTENSIONS:
+            result[rel_path] = _parse_java_file(abs_path)
         else:
             result[rel_path] = _parse_python_file(abs_path, repo_files_set, root)
     return result
@@ -337,6 +366,77 @@ def _parse_js_file(abs_path: Path, repo_files_set: set, root: Path) -> dict:
     imports = _extract_js_imports(source, abs_path, repo_files_set, root)
 
     return {'functions': functions, 'classes': classes, 'imports': imports}
+
+
+# ---------------------------------------------------------------------------
+# Parser Java (regex-based)
+# ---------------------------------------------------------------------------
+
+def _extract_java_methods(class_source: str, class_lines: list[str], class_start: int) -> list[dict]:
+    """Extrae métodos de un bloque de clase Java usando conteo de llaves."""
+    methods = []
+    seen: set[int] = set()
+
+    for match in _JAVA_METHOD_DECL.finditer(class_source):
+        name = match.group(1)
+        if name in _JAVA_CONTROL_KEYWORDS:
+            continue
+
+        local_lineno = class_source.count('\n', 0, match.start()) + 1
+        if local_lineno in seen:
+            continue
+
+        match_line = class_lines[local_lineno - 1] if local_lineno <= len(class_lines) else ''
+        next_line = class_lines[local_lineno] if local_lineno < len(class_lines) else ''
+        if '{' not in match_line and not next_line.strip().startswith('{'):
+            continue
+
+        seen.add(local_lineno)
+        abs_lineno = class_start + local_lineno - 1
+        end_lineno = _find_js_end_lineno(class_lines, local_lineno)
+        abs_end_lineno = class_start + end_lineno - 1
+
+        methods.append({
+            'name': name,
+            'type': 'function',
+            'params': [],
+            'docstring': '',
+            '_lineno': abs_lineno,
+            '_end_lineno': abs_end_lineno,
+        })
+
+    return methods
+
+
+def _extract_java_classes(source: str, lines: list[str]) -> list[dict]:
+    result = []
+    for match in _JAVA_CLASS_DECL.finditer(source):
+        name = match.group(1)
+        start_lineno = _lineno_of(source, match.start())
+        end_lineno = _find_js_end_lineno(lines, start_lineno)
+        class_lines = lines[start_lineno - 1:end_lineno]
+        class_source = '\n'.join(class_lines)
+        methods = _extract_java_methods(class_source, class_lines, start_lineno)
+        result.append({
+            'name': name,
+            'type': 'class',
+            'docstring': '',
+            'methods': methods,
+            '_lineno': start_lineno,
+            '_end_lineno': end_lineno,
+        })
+    return result
+
+
+def _parse_java_file(abs_path: Path) -> dict:
+    try:
+        source = abs_path.read_text(encoding='utf-8')
+    except OSError as e:
+        return {'functions': [], 'classes': [], 'imports': [], 'parse_error': str(e)}
+
+    lines = source.splitlines()
+    classes = _extract_java_classes(source, lines)
+    return {'functions': [], 'classes': classes, 'imports': []}
 
 
 def _extract_functions(tree: ast.AST, source_lines: list[str]) -> list[dict]:

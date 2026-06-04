@@ -1,8 +1,8 @@
 """
-Explorador de repositorios Python y JavaScript/TypeScript.
+Explorador de repositorios Python, JavaScript/TypeScript y Java.
 
 Recorre recursivamente un directorio y devuelve la lista de rutas relativas
-de todos los archivos .py, .js y .ts, ignorando directorios del sistema.
+de todos los archivos .py, .js, .ts y .java, ignorando directorios del sistema.
 """
 
 import os
@@ -10,7 +10,7 @@ from pathlib import Path
 
 IGNORED_DIRS = {'__pycache__', '.git', 'venv', '.venv', 'dist', 'node_modules', '.tox', 'build', 'egg-info'}
 
-_SUPPORTED_EXTENSIONS = ('.py', '.js', '.ts')
+_SUPPORTED_EXTENSIONS = ('.py', '.js', '.ts', '.java')
 
 
 def explore(repo_path: str) -> list[str]:

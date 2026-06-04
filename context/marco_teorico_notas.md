@@ -674,3 +674,280 @@ El script `install.sh` encapsula todo el proceso de configuración del entorno e
 ### Cobertura en reporte.md
 
 El campo `coverage_pct` se agrega como línea `**Cobertura:** 72%` y como fila en la tabla de resumen `| Cobertura | 72% |`. Si no está disponible, se muestra `N/A`. Esta representación permite que el reporte sea útil tanto cuando pytest-cov está instalado como cuando no lo está, sin romper el formato Markdown existente.
+
+---
+
+## HU-14 — Soporte Java con JUnit 5 y Maven
+
+### Qué se implementó
+
+- **`agent/ast_extractor.py`**: se agregó `_parse_java_file()` basado en regex para extraer clases y métodos públicos de archivos `.java`. La extensión usa el mismo dispatcher de `extract()` que para Python y JS, eligiendo el parser por extensión de archivo.
+- **`agent/repo_explorer.py`**: se extendieron las extensiones detectadas para incluir `.java`.
+- **`prompts/prompt_builder.py`**: se creó `JavaPromptTemplate` para generar métodos `@Test` de JUnit 5. El template exige output embebible directamente dentro del cuerpo de una clase Java — sin clase envolvente, sin imports, sin declaraciones de paquete. El agente construye el archivo completo con el wrapper de clase e imports JUnit 5 de forma determinística.
+- **`agent/test_generator.py`** (implementación inicial, luego extraída): se agregaron `_generate_java_tests()`, `_build_java_test_file()`, `_copy_java_sources()`, `_write_java_pom()` e `_is_embeddable_java_block()`. El agente generaba un proyecto Maven completo en `tests_generados/unit/` con la estructura `src/main/java/` (fuentes copiadas) y `src/test/java/` (tests generados), más un `pom.xml` mínimo con JUnit Jupiter 5.10.0 y Maven Surefire 3.1.2.
+- **`agent/test_runner.py`** (implementación inicial, luego extraída): se agregó `_run_maven()` que busca `pom.xml` con `rglob`, ejecuta `mvn test --batch-mode` por cada proyecto encontrado, y parsea los XMLs de Surefire en `target/surefire-reports/` con `xml.etree.ElementTree`.
+- **`examples_java/`**: directorio con `Calculadora.java` y `Conversor.java` como ejemplos de referencia para validar el pipeline Java de extremo a extremo.
+
+### Decisiones de diseño
+
+**El agente construye el archivo Java completo; el LLM genera solo el cuerpo:**
+La misma filosofía que Python y JS. El LLM solo genera los métodos `@Test` como bloques de código embebibles. El agente agrega los imports (`org.junit.jupiter.api.Test`, `Assertions.*`) y el wrapper de clase (`class {ClassName}Test { ... }`). Esto evita que el LLM invente nombres de clases o imports incorrectos.
+
+**Maven como herramienta de build y test:**
+Se eligió Maven sobre compilación manual con `javac` porque maneja las dependencias de JUnit Jupiter automáticamente (via pom.xml), ofrece un output de test estructurado (Surefire XML), y es el estándar en proyectos Java de producción. La alternativa con `javac` + classpath manual requeriría gestionar el classpath de JUnit a mano, lo que es frágil.
+
+**pom.xml generado por el agente:**
+El agente genera un `pom.xml` mínimo con JUnit Jupiter y Maven Surefire en lugar de exigir que el usuario lo provea. Esto permite que el agente funcione sobre repositorios Java sin infraestructura Maven existente.
+
+**Parseo con Surefire XML:**
+Los XMLs de `target/surefire-reports/TEST-*.xml` son el formato estándar de Maven para reportar resultados de tests. Cada `<testcase>` tiene `<failure>`, `<error>` o ninguno (passed). Esta representación es más robusta que parsear el stdout de Maven, que mezcla output del compilador y del runner.
+
+**`_is_embeddable_java_block()`:**
+Función de validación que verifica que el output del LLM es seguro para incrustar dentro del cuerpo de una clase Java. Verifica: llaves balanceadas, ausencia de sentencias `import`, ausencia de declaraciones de clase anidadas, y ausencia de literales con sufijo `L` (detallado más abajo).
+
+---
+
+### Bug 1 — pom.xml no encontrado cuando `tests_dir` es la raíz
+
+**Síntoma:** `_run_maven` recibía `tests_dir = "tests_generados/"` (la raíz de salida). El agente generaba el proyecto Maven en `tests_generados/unit/`, por lo que `pom.xml` estaba en `tests_generados/unit/pom.xml`. El código original usaba `Path(tests_dir) / "pom.xml"` — path directo sin buscar en subdirectorios — lo que producía `FileNotFoundError`.
+
+**Causa raíz:** La firma de `test_runner.run()` recibe `tests_dir` como el directorio raíz del output del agente, no el directorio del proyecto Maven. El proyecto Maven puede estar en un subdirectorio (como `unit/`).
+
+**Solución:** Se reemplazó `Path(tests_dir) / "pom.xml"` por `list(tests_path.rglob("pom.xml"))`. El `rglob` encuentra todos los `pom.xml` en cualquier nivel de profundidad dentro de `tests_dir`. Se itera sobre la lista y se ejecuta Maven una vez por cada proyecto Maven encontrado. Commit `fb124f0`.
+
+---
+
+### Bug 2 — LLM genera literales `long` con sufijo `L`
+
+**Síntoma:** DeepSeek Coder 6.7b generaba tests con literales numéricos como `assertEquals(1000L, result)` o `long expected = 500L`. El compilador Java acepta `long` en esos contextos, pero los métodos bajo test devolvían `int` (o `double`). El tipo incompatible causaba errores de compilación (`error: incompatible types: long cannot be converted to int`) que Maven reportaba como fallos antes de ejecutar cualquier test.
+
+**Causa raíz:** El LLM infiere que operaciones como multiplicación de enteros grandes pueden desbordarse y usa `long` "por las dudas", sin considerar que el código bajo test usa `int`. DeepSeek Coder 6.7b tiene un instruction-following limitado respecto a restricciones de tipo.
+
+**Solución (provisoria — dos capas defensivas):**
+
+1. **Regla en el prompt** (`JavaPromptTemplate._SYSTEM`): se agregó la regla explícita: `"NEVER use the L suffix on numeric literals. All integer numbers must be int. If an operation may return long, use an explicit cast: (int)."` Esto reduce la frecuencia del problema aprovechando el instruction-following del modelo.
+
+2. **Validación de output** (`_is_embeddable_java_block`): se agregó `re.search(r'\d+L\b', code)` antes del loop de validación de líneas. Si el bloque contiene cualquier literal con sufijo `L`, la función retorna `False` y el agente descarta ese bloque (con lo que el LLM reintenta). El regex `\d+L\b` matchea el sufijo `L` pegado a dígitos (`1000L`, `500L`) pero no identifiers que terminen en `L` (`NULL`, `URL`, nombres de variable).
+
+La solución es provisoria porque: (a) el prompt puede ser ignorado por el modelo; (b) descartar el bloque y reintentar no garantiza que el segundo intento tampoco tenga `L`. Una solución definitiva requeriría postprocesamiento que reemplace `\d+L` por `(int)\d+` o un modelo con mejor instruction-following de restricciones de tipo.
+
+---
+
+### Clase de ejemplo: reemplazo de Pedido.java por Conversor.java
+
+**Problema con Pedido.java:** La clase usaba `List<String>`, `ArrayList`, `.stream()`, `mapToDouble()`, y estado mutable privado. El LLM generaba tests que intentaban acceder a campos privados, llamar a métodos inexistentes (inventados), o construir objetos con constructores no declarados. Los tests compilaban con errores o fallaban en runtime por `NullPointerException` al operar sobre los generics.
+
+**Solución:** Se reemplazó `Pedido.java` por `Conversor.java`, una clase de conversión de unidades con 6 métodos públicos puros (`celsiusAFahrenheit`, `fahrenheitACelsius`, `kmAMillas`, `millasAKm`, `kgALibras`, `librasAKg`). La clase tiene el mismo perfil de complejidad que `Calculadora.java`: sin estado interno, sin imports, sin genéricos, sin streams. Cada método incluye validación de negativos donde aplica, lo que provee casos de borde obvios y concretos para el LLM sin que tenga que inventar contexto.
+
+---
+
+---
+
+## HU-18 — Soporte para modelos cloud (Groq)
+
+### Contexto y motivación
+
+El agente operaba exclusivamente con Ollama local (DeepSeek Coder 6.7b). Se incorporó soporte para Groq como proveedor cloud alternativo, manteniendo retrocompatibilidad total: cualquier invocación sin `--provider` produce exactamente el mismo comportamiento que antes.
+
+### Qué se implementó
+
+**`agent/llm_client.py`:**
+- La clase `LLMClient` fue renombrada a `OllamaClient` (sin cambios en su lógica).
+- Se mantuvo `LLMClient = OllamaClient` como alias de módulo para que todos los módulos existentes sigan funcionando sin modificación de sus imports.
+- Se agregó `GroqClient` con la misma interfaz (`generate()`, `is_available()`). Usa el formato OpenAI chat completions (endpoint `POST /chat/completions`, campo `messages` con roles `system` y `user`, respuesta en `choices[0].message.content`).
+- Se agregó `create_client(provider, model)` como función factory: retorna `OllamaClient` o `GroqClient` según el string de proveedor.
+- Se agregó `GroqAPIError` como excepción específica para errores de Groq (HTTP 4xx/5xx y errores de red).
+
+**`agent.py`:**
+- Nuevos flags: `--provider [local|groq]` (default `local`) y `--model` (opcional, sobreescribe el modelo default del cliente).
+- El cliente se crea **una sola vez** con `create_client(args.provider, args.model)` y se pasa a los tres generadores como parámetro. Antes, cada módulo creaba su propio cliente internamente.
+- El mensaje de error en el check de disponibilidad es condicional: para Groq muestra el mensaje de `GROQ_API_KEY`; para Ollama muestra el mensaje de `ollama serve`.
+
+**`agent/test_generator.py`, `agent/integration_generator.py`, `agent/autocorrector.py`:**
+- Cada función pública recibe `client=None`. Si es `None`, crea `LLMClient()` internamente — backward-compatible para cualquier código que llame al módulo directamente sin pasar cliente.
+
+### Decisiones de diseño
+
+**Duck typing en lugar de herencia o ABC:**
+`OllamaClient` y `GroqClient` no comparten clase base ni protocolo formal. Ambos exponen `generate(prompt, system=None) -> str` e `is_available() -> bool`. Python no requiere declaración explícita de la interfaz para que la sustitución funcione. Forzar una ABC agregaría boilerplate sin beneficio real en este tamaño de codebase.
+
+**`create_client()` como factory centralizada:**
+Centraliza la decisión de qué cliente instanciar en un único punto. `agent.py` no necesita conocer los constructores de cada cliente — solo le pasa `provider` y `model`. Agregar un tercer proveedor (Anthropic, Gemini, etc.) solo requiere: una nueva clase en `llm_client.py` y un nuevo `elif` en `create_client()`.
+
+**`LLMClient = OllamaClient` como alias de compatibilidad:**
+Los módulos `test_generator`, `integration_generator` y `autocorrector` importan `LLMClient`. Si se hubiera eliminado el nombre `LLMClient`, todos esos imports habrían roto. El alias `LLMClient = OllamaClient` preserva el contrato público del módulo sin duplicar código.
+
+**`is_available()` de Groq no hace llamada de red:**
+Para Groq, `is_available()` retorna `bool(os.environ.get("GROQ_API_KEY"))`. No hace un ping a la API de Groq. La razón: un ping real requeriría una llamada HTTP (latencia, posible fallo de red en CI), y la presencia de la key es condición necesaria y suficiente para intentar usar el proveedor. Si la key existe pero es inválida, el error se detectará en la primera llamada a `generate()` con un `GroqAPIError` con el código HTTP 401.
+
+**`urllib` para Groq (sin `requests`):**
+El proyecto usa `urllib.request` para Ollama desde HU-01 por política de zero dependencias externas en los clientes. Se mantiene la misma política para Groq: la API de Groq es HTTP puro, no requiere autenticación OAuth ni TLS especial, y `urllib.request` es suficiente.
+
+**`--model` como override opcional:**
+Cada cliente tiene su propio modelo default (`deepseek-coder:6.7b` para Ollama, `llama-3.1-8b-instant` para Groq). `--model` sobreescribe ese default. Esto permite usar cualquier modelo disponible en Groq (ej. `llama-3.3-70b-versatile`) sin cambiar el código.
+
+### Fixes post-implementación
+
+**Fix 1 — Cloudflare 403 por User-Agent genérico de urllib:**
+Al hacer el primer request real a la API de Groq, la respuesta fue un `HTTPError 403` generado por Cloudflare (CDN de Groq), no por la API en sí. Cloudflare bloquea requests cuyo `User-Agent` es el default de `urllib` (`Python-urllib/3.x`). Solución: agregar `"User-Agent": "Mozilla/5.0"` en los headers del request de `GroqClient.generate()`. Este header no afecta la semántica de la llamada a la API — solo es necesario para pasar el filtro de Cloudflare.
+
+**Fix 2 — Rate limit 429 en el autocorrector:**
+El autocorrector llama al LLM en un loop por cada test fallido. Con Groq en tier gratuito, el límite de tokens por minuto (TPM) se alcanza rápidamente cuando hay varios tests fallidos seguidos. La respuesta es `HTTPError 429 Too Many Requests`. Solución: retry con espera en `GroqClient.generate()` — hasta 3 intentos; si recibe 429, espera 10 segundos y reintenta. Si los 3 intentos son 429, lanza `GroqAPIError`. Cualquier otro código HTTP (4xx/5xx distinto de 429) lanza la excepción inmediatamente sin retry.
+
+La espera de 10 segundos es una heurística conservadora: la ventana de rate limit de Groq es por minuto, y 10 segundos es suficiente para que el contador de tokens se recupere entre llamadas consecutivas del autocorrector.
+
+### Groq vs. OpenAI — por qué se eligió Groq
+
+Groq usa exactamente el mismo formato de API que OpenAI (`/v1/chat/completions`, mismo esquema JSON), lo que permite reutilizar el mismo cliente con solo cambiar la URL base y la variable de entorno. La ventaja práctica de Groq sobre OpenAI para este proyecto: ofrece tier gratuito con límites de tokens por minuto suficientes para correr el agente sobre repositorios de ejemplo, y los modelos disponibles (LLaMA 3.1) son open-source, lo que es consistente con la filosofía de privacidad y costo del proyecto.
+
+### Compatibilidad con flujo local
+
+El comando `python3 agent.py --repo ./examples` (sin `--provider`) sigue usando `OllamaClient()` exactamente igual que antes. El único cambio en el flujo local es que el cliente se crea en `agent.py` y se pasa hacia abajo, en lugar de crearse en cada módulo. El resultado observable es idéntico.
+
+### Conceptos teóricos aplicados
+
+- **Duck typing**: sustitución de tipos por interfaz implícita sin herencia formal — característico de Python idiomático.
+- **Patrón Factory**: `create_client()` encapsula la decisión de instanciación, desacoplando `agent.py` de los constructores concretos.
+- **Inyección de dependencia**: el cliente se crea una vez en el punto de entrada y se inyecta a los módulos que lo usan, en lugar de que cada módulo resuelva su propia dependencia. Facilita testing (se puede pasar un mock) y garantiza consistencia de proveedor a lo largo de toda la ejecución.
+- **Open/Closed**: agregar un nuevo proveedor no modifica código existente — solo agrega una clase y un `elif` en la factory.
+
+### Restauración del soporte Java (sesión 2026-06-03)
+
+Tras el refactor del commit `ed4b6b7` que removió el código Java de `test_generator.py` y `test_runner.py`, la funcionalidad fue restaurada completamente:
+
+**`agent/repo_explorer.py`:** `.java` agregado a `_SUPPORTED_EXTENSIONS`. Sin este fix, `explore()` retornaba `[]` para repositorios Java y el agente no detectaba ningún archivo.
+
+**`agent/test_generator.py`:** `_detect_language()` extendida con rama Java (`_JAVA_EXTENSIONS = {'.java'}`). `generate()` restaurado con `has_java` flag y llamada a `_generate_java_tests()`. Funciones Java restauradas: `_generate_java_tests`, `_build_java_test_file`, `_copy_java_sources`, `_write_java_pom`, `_has_balanced_braces`, `_is_embeddable_java_block` (con validación de sufijo `L` via `re.search(r'\d+L\b', code)`). La validación en `_generate_block` usa `_is_embeddable_java_block` en lugar del check simple de `@Test`.
+
+**`agent/test_runner.py`:** `_run_maven()` y `_parse_surefire_reports()` restaurados. `xml.etree.ElementTree` reimportado. `run()` incluye `java_results` en el merge final.
+
+**`examples_java/`:** `Calculadora.java` y `Conversor.java` recreados (habían sido eliminados del repo).
+
+### Estado final del código en esta rama
+
+La implementación Java completa (generación con Maven, ejecución con Surefire) se desarrolló y probó de extremo a extremo en `feature/HU-14-java-unit-tests`. En un refactor posterior dentro de la misma rama, el código de integración (`_generate_java_tests`, `_run_maven`, `_parse_surefire_reports`, etc.) fue extraído de `test_generator.py` y `test_runner.py` para mantener el alcance del merge limpio. Los componentes que permanecen son:
+
+- `prompts/prompt_builder.py`: `JavaPromptTemplate` completo y operativo, con regla anti-`L`-suffix y todas las restricciones de output embebible.
+- `examples_java/Calculadora.java` y `examples_java/Conversor.java`: clases de ejemplo listas para la integración.
+- `agent/ast_extractor.py`: parser regex para `.java` activo.
+
+La reintegración de `_generate_java_tests` y `_run_maven` en la rama de producción queda como trabajo pendiente para la iteración siguiente.
+
+### Conceptos teóricos aplicados
+
+- **Maven como orquestador de build**: Maven no es solo un gestor de dependencias — ejecuta el ciclo de vida de build completo (compile → test-compile → test) en un único comando. `mvn test --batch-mode` es el punto de entrada no interactivo que el agente invoca como subproceso.
+- **Surefire XML como contrato de resultados**: el formato XML de Surefire (`TEST-*.xml`) es el estándar de facto para reportar resultados de tests en el ecosistema JVM. Es el mismo formato consumido por Jenkins, GitHub Actions y otros CI. Usarlo como fuente de verdad desacopla el agente de los cambios en el formato de stdout de Maven.
+- **Guardrail en dos capas (prompt + validación)**: el prompt instruye al modelo (prevención); la validación detecta y descarta outputs incorrectos (corrección). Esta doble capa es el enfoque estándar cuando el instruction-following del modelo no es confiable al 100% para restricciones de tipo técnico específico.
+- **Clases de ejemplo como contrato de simplicidad**: la complejidad de la clase de ejemplo es un parámetro de calidad del agente. Una clase con genéricos, streams o estado mutable hace que el LLM tenga que inferir más contexto para generar tests válidos. Una clase con métodos puros y valores concretos reduce el espacio de posibles errores del LLM a la lógica del test en sí.
+
+---
+
+### Pipeline Java completo — HU-18 sesión 2026-06-03
+
+#### Problema de partida
+
+Al ejecutar `python3 agent.py --repo ./examples_java --provider groq`, el reporte mostraba 0 tests. La carpeta `src/test/java/` existía pero estaba vacía. El diagnóstico reveló tres problemas encadenados:
+
+1. `ast_extractor.py` no tenía parser Java → los `.java` caían al `_parse_python_file` → `ast.parse()` lanzaba `SyntaxError` → `classes: []` → `_generate_java_tests` iteraba lista vacía y no escribía archivos.
+2. `JavaPromptTemplate` no existía en `prompts/prompt_builder.py` → `PromptBuilder.build(language="java")` lanzaba `ValueError`.
+3. `_is_embeddable_java_block` rechazaba casi todos los bloques válidos y ninguno de los inválidos problemáticos.
+
+---
+
+#### Fix 1 — Parser Java en ast_extractor.py
+
+Se agregaron `_JAVA_CLASS_DECL` y `_JAVA_METHOD_DECL` como patrones regex, y las funciones `_extract_java_classes`, `_extract_java_methods` y `_parse_java_file`. El dispatcher de `extract()` añadió rama `elif suffix in _JAVA_EXTENSIONS`.
+
+**Por qué regex (no AST nativo):**
+El mismo razonamiento que para JS/TS en HU-11. No existe un parser Java en la stdlib de Python. Alternativas evaluadas y rechazadas: `javalang` (dependencia externa, sin mantenimiento activo), `tree-sitter` (requiere compilación nativa), `subprocess javap` (solo funciona sobre `.class`, no `.java`). El regex cubre el patrón universal de métodos Java públicos (`[modificadores] [tipo] nombre(`) sin parsear el lenguaje completo.
+
+**Patrón de método:** `^[ \t]+ [modificadores]* [tipo]\s+ ([nombre])\s*\(`. El tipo de retorno actúa como separador entre modificadores y nombre. Para que no matchee sentencias como `if (`, `return a`, o `throw new`, se requiere que después del "tipo" haya `\s+` (espacio) antes del nombre, y que el nombre esté seguido de `\s*\(`. `if (` falla porque `(` no es un identificador válido como nombre de método. `return km * 0.621371` falla porque después de `km` viene `*`, no `(`.
+
+**Verificación:** Con `Calculadora.java` y `Conversor.java`, el parser extrae correctamente 5 y 6 métodos respectivamente, con `parse_error: None`.
+
+---
+
+#### Fix 2 — JavaPromptTemplate
+
+Se creó la clase `JavaPromptTemplate` en `prompts/prompt_builder.py` y se registró como `"java"` en `_REGISTRY`. El system prompt exige output embebible (sin imports, sin declaración de clase, sin comentarios) y lista explícitamente los errores más frecuentes del LLM:
+
+| Regla en el prompt | Error que previene |
+|---|---|
+| `NEVER use JUnit 4 syntax` | `@Test(expected=...)` o `expected = X.class` suelto |
+| `NEVER use Int. — always Integer.` | `Int.MIN_VALUE` (clase inexistente en Java) |
+| `No comments — no // no /* */ no #` | Comentarios Python (`#`) dentro de código Java |
+| `Always use the exact class name` | El LLM instancia `Conversor` en un test de `Calculadora` |
+| `Never use DELTA or delta` | Variable `delta` usada sin declarar |
+| `Never pass null to primitive types` | `c.suma(null, 1)` donde suma espera `int` |
+
+`clean_response()` también recibió `java` en su regex de extracción de bloques markdown (antes solo reconocía `python`, `javascript`, `js`, `ts`, `typescript`).
+
+---
+
+#### Fix 3 — _is_embeddable_java_block como guardrail de validación
+
+El validador fue construido de forma incremental a partir de los errores reales que producía el LLM al compilar con Maven. Cada regla tiene una causa observada:
+
+| Regex | Error de compilación que detecta |
+|---|---|
+| `\d+L\b` | `incompatible types: long cannot be converted to int` |
+| `\bexpected\s*=` | `<identifier> expected` (JUnit 4 syntax) |
+| `\bInt\.` | `cannot find symbol: class Int` |
+| `^\s*#` con `MULTILINE` | Comentario Python dentro de Java, syntax error |
+| `\bDELTA\b\|\bdelta\b` sin declaración local | `cannot find symbol: variable delta` |
+| `\bnull\b` | `incompatible types: <null> cannot be converted to int` |
+| `new WrongClass()` con class_name != WrongClass | Error de lógica: test de `Calculadora` instancia `Conversor` |
+
+La función recibió el parámetro `class_name: Optional[str] = None` para poder verificar que `new X()` usa exactamente el nombre de la clase bajo test.
+
+**Decisión de diseño — guardrail en dos capas:**
+El prompt instruye al LLM (prevención probabilística). El validador descarta bloques inválidos y fuerza un reintento (corrección determinista). La combinación es más robusta que solo el prompt (el LLM puede ignorarlo) y más mantenible que postprocesamiento con regex complejos que intenten corregir el output.
+
+**Límite del enfoque reactivo:** Cada regla del validador surgió de un error concreto observado. Esto funciona para errores frecuentes y predecibles, pero no escala para errores de compilación arbitrarios. Esta limitación motivó Fix 4.
+
+---
+
+#### Fix 4 — Ciclo de compilación-corrección
+
+En lugar de intentar predecir todos los errores posibles del LLM con regex, se implementó un ciclo de feedback real: compilar, detectar el error exacto, corregirlo con el LLM, reintentar.
+
+**Función `_compile_and_fix_java(client, maven_root)`:**
+1. Ejecuta `mvn test-compile --batch-mode` (solo compilación, no ejecución de tests).
+2. Si `returncode == 0`: termina. Los tests están listos para correr.
+3. Si falla: parsea el stdout con `_JAVAC_ERROR_PAT = re.compile(r'\[ERROR\]\s+(/[^\s:]+\.java):\[(\d+),\d+\]\s+(.*)')` para identificar qué archivos tienen errores y en qué líneas.
+4. Para cada archivo con errores: lee el contenido actual, lo envía al LLM junto con los mensajes de error exactos de javac, recibe el archivo corregido, lo escribe.
+5. Repite hasta 3 veces o hasta que compile.
+
+**Por qué `test-compile` en lugar de `test`:**
+`mvn test` ejecuta compile → test-compile → test en secuencia. Separar el paso de compilación permite detectar y corregir errores antes de intentar correr tests. Si los tests compilaran pero fallaran en ejecución, el autocorrector de Python no sabe corregir Java. `test-compile` fallando es la señal que activa el ciclo de corrección; `test` pasando es la señal de éxito.
+
+**Por qué el error de javac es más informativo que el regex:**
+`[ERROR] /path/CalculadoraTest.java:[25,1] error: <identifier> expected` le dice al LLM exactamente qué línea del archivo tiene el problema y qué esperaba el compilador. Es información de alta precisión que no puede extraerse solo mirando el código generado.
+
+**Tradeoff — latencia vs. robustez:**
+Cada vuelta del ciclo agrega una llamada a `mvn test-compile` (~5-10 segundos) y una llamada al LLM (~2-5 segundos con Groq). En el peor caso (3 iteraciones sin convergencia), agrega ~45 segundos. En el caso típico (1-2 iteraciones), agrega ~15 segundos. Es el costo justo frente a tests que no compilarían nunca.
+
+---
+
+#### Deduplicación de métodos en _generate_java_tests
+
+Antes de escribir el archivo final, se extrae el nombre de cada `void nombreMétodo(` del bloque con regex y se verifica contra `seen_method_names: set[str]`. Si el nombre ya fue visto, el bloque se descarta. Esto previene que el LLM genere dos `@Test void suma()` para dos métodos distintos del mismo archivo fuente.
+
+---
+
+#### Resultado de la primera ejecución completa
+
+```
+Passed:       37
+Failed:        0
+Sin resolver: 21
+Total:        58
+Tiempo:       1m 14s
+```
+
+37 de 58 tests Java pasan en la primera ejecución real con Groq (`llama-3.1-8b-instant`). Los 21 sin resolver son métodos para los cuales el LLM no pudo generar código válido en 2 intentos (validador) + 3 intentos de compilación. El ciclo de compilación-corrección logró recuperar tests que habrían quedado sin resolver solo con el validador regex.
+
+**Conceptos teóricos aplicados:**
+- **Feedback loop compilador→LLM**: el compilador como oráculo de corrección — produce el error más específico posible sobre qué está mal en el código generado.
+- **Separación de fases**: generación → validación estática → compilación → ejecución. Cada fase descarta una clase diferente de errores.
+- **Prompt engineering iterativo**: las reglas del prompt se derivan de errores observados en producción, no de especulación a priori. Cada regla tiene un error concreto que la motivó.

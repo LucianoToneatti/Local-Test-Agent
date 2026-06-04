@@ -25,7 +25,7 @@ _JS_TEMPLATE = JsIntegrationPromptTemplate()
 _JS_EXTENSIONS = {".js", ".ts", ".mjs"}
 
 
-def generate(repo_path: str, ast_result: dict, progress_callback=None) -> None:
+def generate(repo_path: str, ast_result: dict, progress_callback=None, client=None) -> None:
     """
     Genera tests de integración para todos los pares de módulos relacionados.
 
@@ -35,9 +35,11 @@ def generate(repo_path: str, ast_result: dict, progress_callback=None) -> None:
                     Estructura: {rel_path: {functions, classes, imports}}
         progress_callback: Callable opcional con firma (current, total, label).
                            Se llama despues de procesar cada par de modulos.
+        client: Cliente LLM a usar. Si es None crea OllamaClient() por defecto.
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    client = LLMClient()
+    if client is None:
+        client = LLMClient()
     repo = Path(repo_path).expanduser().resolve()
 
     pairs = _find_pairs(ast_result)
