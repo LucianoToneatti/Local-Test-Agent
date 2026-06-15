@@ -81,19 +81,26 @@ class OllamaClient:
             return False
 
 
-_GROQ_RETRY_PAT = re.compile(r"try again in ([\d.]+)s", re.IGNORECASE)
+_GROQ_RETRY_PAT = re.compile(
+    r"try again in (?:(\d+)m\s*)?([\d.]+)s",
+    re.IGNORECASE,
+)
 _GROQ_RETRY_DEFAULT = 20
 
 
 def _parse_groq_retry_seconds(body: str) -> float:
     """Parsea los segundos de espera del mensaje 429 de Groq y agrega 1s de margen.
 
-    Groq incluye frases como 'Please try again in 17.29s' en el body del error.
+    Groq usa dos formatos según la duración de la espera:
+      - Segundos puros:    'Please try again in 17.29s'
+      - Minutos+segundos: 'Please try again in 2m0.394s'
     Si no se puede parsear, retorna el valor por defecto de 20s.
     """
     match = _GROQ_RETRY_PAT.search(body)
     if match:
-        return float(match.group(1)) + 1.0
+        minutes = float(match.group(1) or 0)
+        seconds = float(match.group(2))
+        return minutes * 60 + seconds + 1.0
     return float(_GROQ_RETRY_DEFAULT)
 
 
@@ -136,13 +143,16 @@ class GroqClient:
                     result = json.loads(body)
                     return result["choices"][0]["message"]["content"]
             except urllib.error.HTTPError as e:
+                if e.code != 429:
+                    body = e.read().decode("utf-8")
+                    raise GroqAPIError(f"Error de Groq API ({e.code}): {body}") from e
                 body = e.read().decode("utf-8")
-                if e.code == 429:
-                    last_exc = GroqAPIError(f"Error de Groq API ({e.code}): rate limit")
-                    if attempt < 2:
-                        time.sleep(_parse_groq_retry_seconds(body))
-                        continue
-                raise GroqAPIError(f"Error de Groq API ({e.code}): {body}") from e
+                wait = _parse_groq_retry_seconds(body)
+                last_exc = GroqAPIError(
+                    f"Error de Groq API (429): rate limit — intento {attempt + 1}/3"
+                )
+                if attempt < 2:
+                    time.sleep(wait)
             except urllib.error.URLError as e:
                 raise GroqAPIError(f"No se pudo conectar con Groq: {e.reason}") from e
         raise last_exc

@@ -35,9 +35,10 @@ def run(tests_dir: str, repo_path: str = "") -> tuple[dict, float | None]:
         {test_id: {'status': str, 'traceback': str|None}} y coverage_pct es
         el porcentaje de cobertura como float, o None si no esta disponible.
     """
-    py_results, coverage_pct = _run_pytest(tests_dir, repo_path)
-    js_results = _run_jest(tests_dir)
-    java_results = _run_maven(tests_dir)
+    py_results, py_cov = _run_pytest(tests_dir, repo_path)
+    js_results, js_cov = _run_jest(tests_dir)
+    java_results, java_cov = _run_maven(tests_dir)
+    coverage_pct = py_cov if py_cov is not None else (js_cov if js_cov is not None else java_cov)
     return {**py_results, **js_results, **java_results}, coverage_pct
 
 
@@ -82,25 +83,26 @@ def _parse_coverage(output: str) -> float | None:
     return None
 
 
-def _run_jest(tests_dir: str) -> dict:
+def _run_jest(tests_dir: str) -> tuple[dict, float | None]:
     """
     Ejecuta Jest sobre *.test.js y *.test.ts en tests_dir si los hay.
 
     Corre Jest una vez por cada subdirectorio que tenga su propio jest.config.js,
     para que unit/ e integration/ puedan tener configuraciones independientes.
+    Genera coverage/coverage-summary.json via --coverage --coverageReporters=json-summary.
     """
     tests_path = Path(tests_dir)
     if not tests_path.exists():
-        return {}
+        return {}, None
 
     js_files = list(tests_path.rglob("*.test.js")) + list(tests_path.rglob("*.test.ts"))
     if not js_files:
-        return {}
+        return {}, None
 
     if not shutil.which("node"):
         print("[ERROR] Node.js no esta instalado. Jest requiere Node.js para ejecutar tests JavaScript.")
         print("    Instala Node.js desde https://nodejs.org")
-        return {}
+        return {}, None
 
     # Recolectar los directorios con jest.config.js, en orden de aparicion
     config_dirs: list[Path] = []
@@ -115,19 +117,45 @@ def _run_jest(tests_dir: str) -> dict:
         config_dirs = [js_files[0].parent]
 
     results = {}
+    coverage_pct: float | None = None
     for cwd in config_dirs:
         result = subprocess.run(
-            ["npx", "jest", "--json", "--no-coverage"],
+            ["npx", "jest", "--json", "--coverage", "--coverageReporters=json-summary"],
             capture_output=True,
             text=True,
             cwd=str(cwd),
         )
         results.update(_parse_jest_output(result.stdout))
+        if coverage_pct is None:
+            coverage_pct = _parse_jest_coverage(cwd)
 
-    return results
+    return results, coverage_pct
 
 
-def _run_maven(tests_dir: str) -> dict:
+def _parse_jest_coverage(cwd: Path) -> float | None:
+    """
+    Lee coverage/coverage-summary.json generado por Jest y extrae cobertura de lineas.
+
+    Jest escribe el archivo cuando se usa --coverage --coverageReporters=json-summary.
+    Con rootDir: '../..', Jest escribe en rootDir/coverage/ (dos niveles arriba de cwd).
+    Se prueban ambas ubicaciones para soportar ambas configuraciones.
+    Retorna None si el archivo no existe o no puede parsearse.
+    """
+    candidates = [
+        cwd / "coverage" / "coverage-summary.json",
+        cwd.parent.parent / "coverage" / "coverage-summary.json",
+    ]
+    summary_path = next((p for p in candidates if p.exists()), None)
+    if summary_path is None:
+        return None
+    try:
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+        return float(data["total"]["lines"]["pct"])
+    except (KeyError, ValueError, OSError):
+        return None
+
+
+def _run_maven(tests_dir: str) -> tuple[dict, float | None]:
     """
     Ejecuta mvn test sobre proyectos Maven encontrados dentro de tests_dir.
 
@@ -140,7 +168,7 @@ def _run_maven(tests_dir: str) -> dict:
 
     java_files = list(tests_path.rglob("*Test.java"))
     if not java_files:
-        return {}
+        return {}, None
 
     if not shutil.which("mvn"):
         print("[INFO] Maven (mvn) no está instalado.")
@@ -151,25 +179,54 @@ def _run_maven(tests_dir: str) -> dict:
         if pom_files:
             print("    Una vez instalado, ejecutá:")
             print(f"    cd {pom_files[0].parent} && mvn test")
-        return {}
+        return {}, None
 
     pom_files = list(tests_path.rglob("pom.xml"))
     if not pom_files:
         print("[ERROR] pom.xml no encontrado. Regenerá los tests.")
-        return {}
+        return {}, None
 
     results = {}
+    coverage_pct: float | None = None
     for pom_path in pom_files:
         maven_root = pom_path.parent
-        proc = subprocess.run(
-            ["mvn", "test", "--batch-mode"],
+        subprocess.run(
+            ["mvn", "test", "--batch-mode", "-fae"],
             text=True,
             cwd=str(maven_root),
         )
         surefire_dir = maven_root / "target" / "surefire-reports"
         results.update(_parse_surefire_reports(surefire_dir))
+        if coverage_pct is None:
+            coverage_pct = _parse_jacoco_coverage(maven_root)
 
-    return results
+    return results, coverage_pct
+
+
+def _parse_jacoco_coverage(maven_root: Path) -> float | None:
+    """
+    Lee target/site/jacoco/jacoco.xml generado por el plugin JaCoCo y extrae
+    cobertura de lineas: covered / (covered + missed) * 100.
+
+    JaCoCo escribe el XML cuando el pom.xml incluye el plugin con goals
+    prepare-agent (fase initialize) y report (fase test).
+    Retorna None si el archivo no existe o no puede parsearse.
+    """
+    jacoco_xml = maven_root / "target" / "site" / "jacoco" / "jacoco.xml"
+    if not jacoco_xml.exists():
+        return None
+    try:
+        root = ET.parse(jacoco_xml).getroot()
+        for counter in root.findall("counter"):
+            if counter.get("type") == "LINE":
+                missed = int(counter.get("missed", 0))
+                covered = int(counter.get("covered", 0))
+                total = covered + missed
+                if total > 0:
+                    return covered / total * 100
+    except ET.ParseError:
+        pass
+    return None
 
 
 def _parse_surefire_reports(reports_dir: Path) -> dict:

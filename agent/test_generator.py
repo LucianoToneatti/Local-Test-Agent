@@ -10,6 +10,7 @@ una vez si el código generado no es válido.
 """
 
 import ast
+import os
 import re
 import shutil
 import subprocess
@@ -132,16 +133,21 @@ def _write_jest_config(repo: Path) -> None:
     """
     Escribe jest.config.js en el directorio de tests generados.
 
-    rootDir: '.' restringe a Jest a escanear solo ese directorio (evita que
-    suba al home buscando package.json y encuentre archivos malformados).
-    modulePaths: [repo] permite require('modulo') sin './' — equivalente al
-    sys.path.insert de conftest.py para Python.
+    rootDir: '../..' apunta al directorio raíz del proyecto (dos niveles arriba
+    de tests_generados/unit/). Así Jest puede encontrar los archivos fuente del
+    repo y escribir coverage/ en un lugar predecible.
+    coverageProvider: 'v8' instrumenta sin Babel, evitando errores con CommonJS.
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    root_dir_abs = (OUTPUT_DIR / "../..").resolve()
+    repo_relpath = os.path.relpath(repo, root_dir_abs)
     config = (
         "module.exports = {\n"
-        "  rootDir: '.',\n"
-        f"  modulePaths: ['{repo}'],\n"
+        "  rootDir: '../..',\n"
+        f"  testMatch: ['<rootDir>/tests_generados/unit/**/*.test.{{js,ts}}'],\n"
+        f"  modulePaths: ['<rootDir>/{repo_relpath}'],\n"
+        "  coverageProvider: 'v8',\n"
+        f"  collectCoverageFrom: ['{repo_relpath}/**/*.{{js,ts}}'],\n"
         "};\n"
     )
     (OUTPUT_DIR / "jest.config.js").write_text(config)
@@ -317,10 +323,27 @@ def _parse_javac_errors(output: str) -> dict:
 def _fix_java_file_with_llm(client: LLMClient, content: str, errors: str) -> Optional[str]:
     """Pide al LLM que corrija los errores de compilación en el archivo Java."""
     system = (
-        "You are a Java expert. Fix the compilation errors in the Java file below. "
-        "Return ONLY the complete corrected Java file. "
+        "You are a Java expert. Fix the compilation errors in the Java test file below. "
+        "Return ONLY the complete corrected Java file, from the first import to the last closing brace. "
         "No markdown, no backticks, no explanations. "
-        "Start your response with the first line of the file (import or class declaration)."
+        "Start your response with the first line of the file (import or class declaration).\n"
+        "ABSOLUTE RULES — never break these:\n"
+        "- Do NOT add any import statement that is not already present in the original file.\n"
+        "- Only use JUnit 5 assertion methods available via "
+        "'import static org.junit.jupiter.api.Assertions.*': "
+        "assertEquals, assertTrue, assertFalse, assertNull, assertNotNull, assertThrows.\n"
+        "- Do NOT use long literals (e.g. 100L). Use int or double literals only.\n"
+        "- NEVER use JUnit 4 syntax. For exceptions always use assertThrows(), never @Test(expected=...).\n"
+        "- NEVER use Int. — always use Integer. (e.g. Integer.MIN_VALUE, Integer.MAX_VALUE).\n"
+        "- Do NOT add any comments inside the test methods. No // lines, no /* */ blocks, no # characters.\n"
+        "- Never use DELTA or delta as a variable. "
+        "For floating-point comparisons use assertEquals(expected, actual, 0.001) directly.\n"
+        "- Never pass null to methods that expect primitive types like int, double, float.\n"
+        "- Always use the exact class name as provided. Never instantiate a different class.\n"
+        "- Never use variables that are not declared within the same test method.\n"
+        "- Instantiate the class under test inside each test method.\n"
+        "- NEVER use Double.INFINITY — use Double.POSITIVE_INFINITY or Double.NEGATIVE_INFINITY instead.\n"
+        "- NEVER use ExecutableAssert or any variable not declared in the current test method."
     )
     user = (
         f"Fix the following Java compilation errors:\n\n"
@@ -442,10 +465,12 @@ def _copy_java_sources(repo: Path) -> None:
 
 
 def _write_java_pom() -> None:
-    """Escribe un pom.xml mínimo con JUnit 5 en el directorio de tests generados."""
+    """Escribe un pom.xml con JUnit 5 y JaCoCo en el directorio de tests generados."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     pom_path = OUTPUT_DIR / "pom.xml"
     if pom_path.exists():
+        # El pom es idempotente: si ya existe (de un run previo) no se sobreescribe.
+        # Para actualizar el pom (ej. agregar plugins nuevos) hay que borrar tests_generados/.
         return
     pom_content = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -476,6 +501,22 @@ def _write_java_pom() -> None:
         '                <groupId>org.apache.maven.plugins</groupId>\n'
         '                <artifactId>maven-surefire-plugin</artifactId>\n'
         '                <version>3.1.2</version>\n'
+        '            </plugin>\n'
+        '            <plugin>\n'
+        '                <groupId>org.jacoco</groupId>\n'
+        '                <artifactId>jacoco-maven-plugin</artifactId>\n'
+        '                <version>0.8.13</version>\n'
+        '                <executions>\n'
+        '                    <execution>\n'
+        '                        <id>prepare-agent</id>\n'
+        '                        <goals><goal>prepare-agent</goal></goals>\n'
+        '                    </execution>\n'
+        '                    <execution>\n'
+        '                        <id>report</id>\n'
+        '                        <phase>test</phase>\n'
+        '                        <goals><goal>report</goal></goals>\n'
+        '                    </execution>\n'
+        '                </executions>\n'
         '            </plugin>\n'
         '        </plugins>\n'
         '    </build>\n'

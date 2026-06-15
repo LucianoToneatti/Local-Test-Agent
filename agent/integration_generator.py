@@ -388,10 +388,12 @@ def _build_java_integration_test_file(class_a: str, class_b: str, methods_block:
 
 
 def _write_java_integration_pom() -> None:
-    """Escribe pom.xml con JUnit 5 en tests_generados/integration/ si no existe."""
+    """Escribe pom.xml con JUnit 5 y JaCoCo en tests_generados/integration/ si no existe."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     pom_path = OUTPUT_DIR / "pom.xml"
     if pom_path.exists():
+        # El pom es idempotente: si ya existe (de un run previo) no se sobreescribe.
+        # Para actualizar el pom (ej. agregar plugins nuevos) hay que borrar tests_generados/.
         return
     pom_content = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -422,6 +424,22 @@ def _write_java_integration_pom() -> None:
         '                <groupId>org.apache.maven.plugins</groupId>\n'
         '                <artifactId>maven-surefire-plugin</artifactId>\n'
         '                <version>3.1.2</version>\n'
+        '            </plugin>\n'
+        '            <plugin>\n'
+        '                <groupId>org.jacoco</groupId>\n'
+        '                <artifactId>jacoco-maven-plugin</artifactId>\n'
+        '                <version>0.8.13</version>\n'
+        '                <executions>\n'
+        '                    <execution>\n'
+        '                        <id>prepare-agent</id>\n'
+        '                        <goals><goal>prepare-agent</goal></goals>\n'
+        '                    </execution>\n'
+        '                    <execution>\n'
+        '                        <id>report</id>\n'
+        '                        <phase>test</phase>\n'
+        '                        <goals><goal>report</goal></goals>\n'
+        '                    </execution>\n'
+        '                </executions>\n'
         '            </plugin>\n'
         '        </plugins>\n'
         '    </build>\n'
