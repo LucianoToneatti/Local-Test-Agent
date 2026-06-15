@@ -219,7 +219,9 @@ class JavaPromptTemplate(PromptTemplate):
         "- Cover: happy path, edge case, and expected exception where applicable.\n"
         "- Always use the exact class name as provided. Never instantiate a different class.\n"
         "- Never use variables that are not declared within the same test method.\n"
-        "- Instantiate the class under test inside each test method."
+        "- Instantiate the class under test inside each test method.\n"
+        "- NEVER use Double.INFINITY — use Double.POSITIVE_INFINITY or Double.NEGATIVE_INFINITY instead.\n"
+        "- NEVER use ExecutableAssert or any variable not declared in the current test method."
     )
 
     _USER_TEMPLATE = (
