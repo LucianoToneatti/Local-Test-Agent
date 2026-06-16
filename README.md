@@ -1,37 +1,115 @@
 # Local-Test-Agent
 
-Agente local de generación automática de tests para repositorios Python, impulsado por un modelo LLM local (Ollama + DeepSeek Coder 6.7b). Todo el procesamiento ocurre en la máquina, sin depender de servicios en la nube.
+```
++--------------------------------------------------+
+|  Local-Test-Agent v1.0                           |
+|  Generación automática de tests con LLM          |
+|  Python · JavaScript/TypeScript · Java           |
++--------------------------------------------------+
+```
 
-## Qué hace
+Agente de generación automática de tests unitarios y de integración para repositorios **Python, JavaScript/TypeScript y Java**, impulsado por un LLM local (Ollama) o cloud (Groq). Analiza el código fuente, genera los tests, los ejecuta, autocorrige los fallidos y produce un reporte con cobertura de código.
 
-El agente recibe la ruta a un repositorio Python y realiza automáticamente los siguientes pasos:
+---
 
-1. **Explora** el repositorio y encuentra todos los archivos `.py`
-2. **Extrae** funciones, clases y métodos usando análisis de AST
-3. **Genera tests unitarios** para cada función y método encontrado
-4. **Genera tests de integración** para pares de módulos relacionados por imports
-5. **Ejecuta los tests** generados con pytest
-6. **Autocorrige** los tests fallidos (hasta 3 intentos por test, consultando al LLM)
-7. **Genera un reporte** `reporte.md` con el resumen de resultados, cobertura de código y tiempo total
+## Cómo funciona
 
-Los tests se guardan en `tests_generados/unit/` y `tests_generados/integration/`. Cada directorio incluye un `conftest.py` generado automáticamente que agrega el repositorio analizado al `sys.path`.
+```
+1. ANALIZAR    Explora el repo y extrae funciones, clases y métodos con AST/regex
+       ↓
+2. GENERAR     Llama al LLM una vez por función para generar tests unitarios y de integración
+       ↓
+3. EJECUTAR    Corre pytest / Jest / Maven y muestra los resultados en tiempo real
+       ↓
+4. CORREGIR    Reenvía los tests fallidos al LLM con el traceback (hasta 3 intentos)
+       ↓
+5. REPORTAR    Escribe reporte.md con passed, sin resolver, posibles bugs y cobertura
+```
+
+---
+
+## Características
+
+- **Multi-lenguaje:** Python (pytest), JavaScript/TypeScript (Jest), Java (JUnit 5 + Maven)
+- **Local-first:** corre con Ollama en tu máquina, sin exponer código a servicios externos
+- **Cloud opcional:** soporte para Groq con los mismos comandos, mucho más rápido
+- **Autocorrección:** los tests fallidos se reenvían al LLM con el traceback; hasta 3 intentos por test
+- **Diagnóstico de bugs:** distingue entre un test con error corregible y un posible bug real en el código
+- **Cobertura:** Python (pytest-cov), JavaScript/TypeScript (Jest V8), Java (JaCoCo 0.8.13)
+
+---
 
 ## Requisitos previos
 
-- **Sistema operativo:** Linux (probado en Debian/Ubuntu)
-- **Python:** 3.11 o superior
-- **pip + venv:** incluidos con Python 3.11+
-- **pytest-cov:** instalado dentro del venv (el `install.sh` lo hace automáticamente)
-- **Java:** 11 o superior (el proyecto fue desarrollado con Java 24 vía SDKMAN)
-- **Maven:** 3.9 o superior (vía SDKMAN)
-- **Node.js + Jest:** requeridos para correr tests JavaScript/TypeScript
-- **Ollama** con el modelo `deepseek-coder:6.7b` descargado
-- **RAM:** mínimo 8 GB recomendados (el modelo ocupa ~4 GB en RAM)
-- **Espacio en disco:** ~4 GB para el modelo
+### Python 3.11+
+
+```bash
+python3 --version   # debe mostrar 3.11 o superior
+```
+
+Si no tenés Python 3.11, descargalo desde [python.org/downloads](https://www.python.org/downloads/) o con tu gestor de paquetes:
+
+```bash
+# Ubuntu/Debian
+sudo apt install python3.11 python3.11-venv
+```
+
+### Ollama (para modo local)
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull deepseek-coder:6.7b   # ~3.8 GB
+```
+
+Verificación:
+
+```bash
+ollama list   # debe mostrar deepseek-coder:6.7b
+```
+
+### Node.js 18+ (solo para repos JS/TS)
+
+Con `nvm` (recomendado):
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+nvm install 18
+nvm use 18
+node --version   # debe mostrar v18 o superior
+```
+
+O con apt:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+**Jest** debe instalarse dentro del proyecto JS que querés analizar:
+
+```bash
+cd /ruta/al/repo-js
+npm install --save-dev jest
+```
+
+### Java 24 + Maven (solo para repos Java)
+
+Con SDKMAN (recomendado):
+
+```bash
+curl -s "https://get.sdkman.io" | bash
+source "$HOME/.sdkman/bin/sdkman-init.sh"
+
+sdk install java 24-open
+sdk install maven 3.9.9
+
+java --version    # debe mostrar Java 24
+mvn --version     # debe mostrar Maven 3.9.x
+```
+
+---
 
 ## Instalación
-
-Usá el script de instalación que crea el venv, instala dependencias y verifica Ollama en un solo paso:
 
 ```bash
 git clone <url-del-repo>
@@ -39,179 +117,262 @@ cd Local-Test-Agent
 bash install.sh
 ```
 
-El script realiza automáticamente:
-1. Crea el entorno virtual `venv/` si no existe
-2. Instala `pytest`, `pytest-cov` y `requests`
-3. Verifica que Ollama esté instalado
-4. Descarga el modelo `deepseek-coder:6.7b` si no está disponible
+El script crea el entorno virtual, instala `pytest` y `pytest-cov`, verifica Ollama y descarga el modelo si no está disponible.
 
-### Instalación manual (alternativa)
-
-Si preferís hacerlo paso a paso:
+### Verificación rápida antes de correr
 
 ```bash
-# 1. Instalar Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-
-# 2. Descargar el modelo (~3.8 GB)
-ollama pull deepseek-coder:6.7b
-
-# 3. Clonar el repositorio
-git clone <url-del-repo>
-cd Local-Test-Agent
-
-# 4. Crear entorno virtual e instalar dependencias
-python3 -m venv venv
 source venv/bin/activate
-pip install pytest pytest-cov requests
+python3 --version       # 3.11+
+ollama list             # deepseek-coder:6.7b presente
+node --version          # v18+ (si vas a analizar JS/TS)
+java --version          # 24 (si vas a analizar Java)
+mvn --version           # 3.9+ (si vas a analizar Java)
 ```
+
+---
 
 ## Uso
 
-Activá el entorno virtual antes de correr el agente:
-
 ```bash
 source venv/bin/activate
+python3 agent.py --repo ./ruta/al/repositorio
 ```
 
-### Proveedor local (Ollama, default)
-
-```bash
-python3 agent.py --repo ./ruta/al/repo
-```
-
-Podés usar rutas relativas, absolutas o con `~`:
+### Python
 
 ```bash
 python3 agent.py --repo ./examples
-python3 agent.py --repo ~/codigo-para-testear
-python3 agent.py --repo /home/usuario/proyectos/mi-app
 ```
 
-### Proveedor cloud (Groq)
+### JavaScript / TypeScript
 
 ```bash
-export GROQ_API_KEY="tu-key"
-python3 agent.py --repo ./examples --provider groq
+python3 agent.py --repo ./examples_js
 ```
 
-Para usar un modelo específico de Groq:
+El agente detecta archivos `.js` y `.ts` automáticamente. Asegurate de que Jest esté instalado en el repo (ver Requisitos).
+
+### Java
+
+```bash
+python3 agent.py --repo ./examples_java
+```
+
+El agente genera un proyecto Maven completo en `tests_generados/unit/` con `pom.xml`, las fuentes copiadas y los tests JUnit 5.
+
+---
+
+## Proveedor cloud: Groq
+
+Groq es una alternativa cloud que usa la misma interfaz que el modo local, pero puede ser **5-10x más rápida** para repos grandes.
+
+### Paso a paso para obtener la API key
+
+1. Ir a [console.groq.com](https://console.groq.com) y crear una cuenta gratuita
+2. En el menú izquierdo, ir a **API Keys**
+3. Hacer clic en **Create API Key**, asignarle un nombre y copiar el valor (`gsk_...`)
+
+### Configurar y usar
+
+```bash
+export GROQ_API_KEY="gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+python3 agent.py --repo ./examples_java --provider groq
+```
+
+Para usar un modelo más potente:
 
 ```bash
 python3 agent.py --repo ./examples --provider groq --model llama-3.3-70b-versatile
 ```
 
-Si `GROQ_API_KEY` no está seteada, el agente lo indica y termina:
+### Rate limits del tier gratuito
+
+El tier gratuito de Groq tiene un límite de **6000 tokens por minuto (TPM)**. El agente maneja automáticamente los errores 429 — si se alcanza el límite, espera el tiempo indicado por Groq y reintenta. Para repos con muchas funciones, esto puede agregar tiempo de espera entre llamadas.
+
+---
+
+## Modelos soportados
+
+| Proveedor | Modelo default | Alternativas |
+|-----------|---------------|--------------|
+| Local (Ollama) | `deepseek-coder:6.7b` | cualquier modelo disponible en `ollama list` |
+| Cloud (Groq) | `llama-3.1-8b-instant` | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
+
+Cambiá el modelo con `--model nombre-del-modelo` en cualquier modo.
+
+---
+
+## Ejemplo de salida
+
+Run completo contra `examples/` con `--provider groq`:
 
 ```
-[ERROR] GROQ_API_KEY no encontrada. Exportá la variable de entorno antes de usar --provider groq.
-```
+(venv) lucianotoneatti@debianHP:~/Proyectos-CC/TIF/Local-Test-Agent$ python3 agent.py --repo ./examples --provider groq
 
-Podés obtener una API key gratuita en [console.groq.com](https://console.groq.com).
 
-**Ejemplo de salida con Groq (./examples):**
-
-```
-+--- Resumen final ---+
-  Passed:       40
-  Failed:       0
-  Sin resolver: 4
-  Total:        44
-  Cobertura:    100%
-  Tiempo:       1m 11s
-```
-
-### Salida esperada
-
-```
-+-----------------------------+
-|  Local-Test-Agent v1.0     |
-+-----------------------------+
+  __  __       _ _   _       _
+ |  \/  |_   _| | |_(_)     | |    __ _ _ __   __ _ _   _  __ _  __ _  ___
+ | |\/| | | | | | __| |_____| |   / _` | '_ \ / _` | | | |/ _` |/ _` |/ _ \
+ | |  | | |_| | | |_| |_____| |__| (_| | | | | (_| | |_| | (_| | (_| |  __/
+ |_|  |_|\__,_|_|\__|_|     |_____\__,_|_| |_|\__, |\__,_|\__,_|\__, |\___|
+                                               |___/             |___/
+  _____         _        _                    _
+ |_   _|__  ___| |_     / \   __ _  ___ _ __ | |_
+   | |/ _ \/ __| __|   / _ \ / _` |/ _ \ '_ \| __|
+   | |  __/\__ \ |_   / ___ \ (_| |  __/ | | | |_
+   |_|\___||___/\__| /_/   \_\__, |\___|_| |_|\__|
+                             |___/
+v1.0
 
 [*] Analizando repositorio 'examples'...
 [*] Generando tests unitarios (2 archivo(s))...
-  [=============================>] 100% estadistica.py
+  [==============================] 100% estadistica.py   
 [OK] tests_generados/unit/
 
 [*] Generando tests de integracion...
-  [=============================>] 100% estadistica+calculadora
+  [==============================] 100% estadistica+calculadora   
 [OK] tests_generados/integration/
 
 [*] Ejecutando tests generados...
-  [PASS] tests_generados/unit/test_calculadora.py::test_sumar
-  [PASS] tests_generados/unit/test_calculadora.py::test_restar
-  [FAIL] tests_generados/unit/test_estadistica.py::test_promedio
-  [PASS] tests_generados/integration/test_estadistica_calculadora.py::test_flujo
+  [PASS] tests_generados/unit/test_calculadora.py::test_sumar_happy
+  [PASS] tests_generados/unit/test_calculadora.py::test_sumar_edge
+  [PASS] tests_generados/unit/test_calculadora.py::test_sumar_exception_type
+  [PASS] tests_generados/unit/test_calculadora.py::test_sumar_exception_type2
+  [FAIL] tests_generados/unit/test_calculadora.py::test_restar_happy_path
+  [PASS] tests_generados/unit/test_calculadora.py::test_restar_edge_cases
+  [PASS] tests_generados/unit/test_calculadora.py::test_restar_negative_result
+  [FAIL] tests_generados/unit/test_calculadora.py::test_restar_zero_division
+  [PASS] tests_generados/unit/test_calculadora.py::test_restar_type_error
+  [PASS] tests_generados/unit/test_calculadora.py::test_multiplicar_happy_path
+  [PASS] tests_generados/unit/test_calculadora.py::test_multiplicar_edge_case
+  [PASS] tests_generados/unit/test_calculadora.py::test_multiplicar_negative_numbers
+  [PASS] tests_generados/unit/test_calculadora.py::test_multiplicar_non_integer
+  [FAIL] tests_generados/unit/test_calculadora.py::test_multiplicar_invalid_input_type
+  [FAIL] tests_generados/unit/test_calculadora.py::test_multiplicar_invalid_input_type_2
+  [PASS] tests_generados/unit/test_calculadora.py::test_dividir_happy_path
+  [PASS] tests_generados/unit/test_calculadora.py::test_dividir_cero_divisor
+  [PASS] tests_generados/unit/test_calculadora.py::test_dividir_cero_dividendo
+  [PASS] tests_generados/unit/test_calculadora.py::test_dividir_negativos
+  [PASS] tests_generados/unit/test_calculadora.py::test_dividir_floater
+  [PASS] tests_generados/unit/test_calculadora.py::test_potencia_happy_path
+  [PASS] tests_generados/unit/test_calculadora.py::test_potencia_positivo_base_negativo_exponente
+  [PASS] tests_generados/unit/test_calculadora.py::test_potencia_positivo_base_cero_exponente
+  [PASS] tests_generados/unit/test_calculadora.py::test_potencia_cubo_base_cero_exponente
+  [FAIL] tests_generados/unit/test_calculadora.py::test_potencia_base_negativo_exponente_negativo
+  [PASS] tests_generados/unit/test_calculadora.py::test_potencia_raiz_base_negativo_exponente_parity
+  [PASS] tests_generados/unit/test_calculadora.py::test_potencia_exponente_zero_base_cero
+  [PASS] tests_generados/unit/test_calculadora.py::test_potencia_exponente_zero_base_deseado
+  [FAIL] tests_generados/unit/test_calculadora.py::test_potencia_zero_division_error
+  [PASS] tests_generados/unit/test_estadistica.py::test_promedio_happy_path
+  [PASS] tests_generados/unit/test_estadistica.py::test_promedio_un_elemento
+  [PASS] tests_generados/unit/test_estadistica.py::test_promedio_lista_vacia
+  [PASS] tests_generados/unit/test_estadistica.py::test_promedio_con_zeros
+  [PASS] tests_generados/unit/test_estadistica.py::test_promedio_con_cifras_decimales
+  [FAIL] tests_generados/unit/test_estadistica.py::test_varianza_happy_path
+  [PASS] tests_generados/unit/test_estadistica.py::test_varianza_empty_list
+  [FAIL] tests_generados/unit/test_estadistica.py::test_varianza_calculator_malfunction
+  [FAIL] tests_generados/unit/test_estadistica.py::test_varianza_calculator_malfunction2
+  [PASS] tests_generados/unit/test_estadistica.py::test_varianza_function_promedio_not_defined
+  [PASS] tests_generados/unit/test_estadistica.py::test_varianza_function_sumar_not_defined
 
-[*] Autocorrigiendo 1 test(s) fallido(s) (hasta 3 intentos)...
-[OK] Autocorreccion: 1 resuelto(s), 0 sin resolver
+[*] Autocorrigiendo 9 test(s) fallido(s) (hasta 3 intentos)...
+[OK] Autocorreccion: 32 resuelto(s), 6 sin resolver, 2 posible(s) bug
 
 [*] Generando reporte...
 [OK] Reporte generado: reporte.md
 
++--- Preview del reporte ---+
+  Posibles bugs (2):
+    [BUG] tests_generados/unit/test_calculadora.py::test_restar_happy_path
+          Esperado: -5 — Obtenido: 5
+    [BUG] tests_generados/unit/test_calculadora.py::test_potencia_base_negativo_exponente_negativo
+          Esperado: -0.125 — Obtenido: (1 / 8)
+
+  Sin resolver (6):
+    [WARN] tests_generados/unit/test_calculadora.py::test_multiplicar_invalid_input_type
+           tests_generados/unit/test_calculadora.py:59: Failed
+    [WARN] tests_generados/unit/test_calculadora.py::test_multiplicar_invalid_input_type_2
+           tests_generados/unit/test_calculadora.py:63: Failed
+    [WARN] tests_generados/unit/test_calculadora.py::test_potencia_zero_division_error
+           tests_generados/unit/test_calculadora.py:113: Failed
+    [WARN] tests_generados/unit/test_estadistica.py::test_varianza_happy_path
+           tests_generados/unit/test_estadistica.py:30: NameError
+    [WARN] tests_generados/unit/test_estadistica.py::test_varianza_calculator_malfunction
+           tests_generados/unit/test_estadistica.py:42: NameError
+    [WARN] tests_generados/unit/test_estadistica.py::test_varianza_calculator_malfunction2
+           tests_generados/unit/test_estadistica.py:51: NameError
++---------------------------+
+
+
 +--- Resumen final ---+
-  Passed:       4
+  Passed:       32
   Failed:       0
-  Sin resolver: 0
-  Total:        4
-  Cobertura:    78%
-  Tiempo:       3m 42s
+  Sin resolver: 6
+  Posible bug:  2
+  Total:        40
+  Cobertura:    100%
+  Tiempo:       1m 08s
 ```
 
-### Correr los tests generados manualmente
+---
 
-```bash
-pytest tests_generados/ -v
-```
+## Archivos generados
 
-### Correr con cobertura manualmente
+El agente escribe los tests en `tests_generados/` y el reporte en `reporte.md`:
 
-```bash
-pytest tests_generados/ -v --cov=./ruta/al/repo --cov-report=term-missing
-```
+**Tests unitarios:**
+- Python: `tests_generados/unit/test_<modulo>.py`
+- JavaScript/TypeScript: `tests_generados/unit/<modulo>.test.js`
+- Java: `tests_generados/unit/src/test/java/<Clase>Test.java`
 
-## Qué genera el agente
+**Tests de integración:**
+- Python: `tests_generados/integration/test_<a>_<b>.py`
+- JavaScript/TypeScript: `tests_generados/integration/<a>_<b>.test.js`
+- Java: `tests_generados/integration/src/test/java/<A><B>IntegrationTest.java`
 
-| Archivo | Descripción |
-|---|---|
-| `tests_generados/unit/test_<modulo>.py` | Tests unitarios por archivo fuente |
-| `tests_generados/unit/conftest.py` | Agrega el repo al `sys.path` para pytest |
-| `tests_generados/integration/test_<a>_<b>.py` | Tests de integración para pares de módulos relacionados |
-| `tests_generados/integration/conftest.py` | Ídem, para la carpeta de integración |
-| `reporte.md` | Resumen de resultados: passed, failed, sin resolver, cobertura y tiempo total |
+**Reporte:** `reporte.md` con fecha, tiempo, cobertura, tabla de resumen, tests fallidos, sin resolver y posibles bugs detectados.
+
+---
 
 ## Estructura del proyecto
 
 ```
 Local-Test-Agent/
 ├── agent/
-│   ├── ast_extractor.py        # Extracción de funciones/clases con AST
-│   ├── autocorrector.py        # Autocorrección de tests fallidos
-│   ├── integration_generator.py # Generación de tests de integración
-│   ├── llm_client.py           # Cliente HTTP para la API local de Ollama
-│   ├── report_generator.py     # Generación de reporte.md
-│   ├── repo_explorer.py        # Exploración de archivos .py del repositorio
-│   ├── terminal_ui.py          # Interfaz de terminal con colores ANSI
-│   ├── test_generator.py       # Generación de tests unitarios
-│   └── test_runner.py          # Ejecución de tests con pytest y coverage
+│   ├── ast_extractor.py         # Extracción de funciones y clases (AST Python, regex JS/Java)
+│   ├── autocorrector.py         # Autocorrección y diagnóstico de posibles bugs
+│   ├── integration_generator.py # Tests de integración (Python, JS/TS, Java)
+│   ├── llm_client.py            # Clientes HTTP para Ollama y Groq
+│   ├── report_generator.py      # Escritura de reporte.md
+│   ├── repo_explorer.py         # Exploración de archivos .py/.js/.ts/.java
+│   ├── terminal_ui.py           # Colores ANSI, barra de progreso, resumen final
+│   ├── test_generator.py        # Tests unitarios (Python, JS/TS, Java)
+│   └── test_runner.py           # pytest / Jest / Maven + parseo de cobertura
 ├── prompts/
-│   └── prompt_builder.py       # Construcción de prompts para el LLM
-├── examples/                   # Repositorio de ejemplo (calculadora, estadistica)
-├── tests/                      # Tests del propio agente
-├── tests_generados/            # Output: tests generados (no versionar)
-│   ├── unit/
-│   └── integration/
-├── context/                    # Notas de diseño y decisiones técnicas
-├── agent.py                    # Punto de entrada
-├── install.sh                  # Script de instalación
-├── reporte.md                  # Reporte del último run (generado automáticamente)
-└── README.md
+│   └── prompt_builder.py        # Templates de prompt por lenguaje y tipo de test
+├── examples/                    # Ejemplo Python: calculadora.py, estadistica.py
+├── examples_js/                 # Ejemplo JS: calculadora.js, estadistica.js
+├── examples_java/               # Ejemplo Java: Calculadora.java, Conversor.java, Estadistica.java
+├── tests/                       # Tests del propio agente
+├── tests_generados/             # Output generado (en .gitignore)
+├── context/                     # Notas de diseño y decisiones técnicas
+├── agent.py                     # Punto de entrada CLI
+├── install.sh                   # Script de instalación
+└── reporte.md                   # Reporte del último run
 ```
+
+---
 
 ## Limitaciones conocidas
 
-- **Tiempo de ejecución:** el agente llama al LLM una vez por función/método encontrado. Un repositorio con 50 funciones puede tardar 15-30 minutos dependiendo del hardware. Repositorios grandes pueden tardar horas.
-- **Calidad de los tests:** los tests son generados por un LLM y pueden contener errores lógicos ocasionales. Revisarlos antes de incorporarlos a un pipeline de CI.
-- **Un modelo a la vez:** Ollama sirve un modelo a la vez. Si tenés otro modelo corriendo en paralelo puede afectar la performance.
-- **Cobertura solo para Python:** `pytest-cov` solo reporta cobertura para los archivos Python analizados. Los tests JavaScript no contribuyen al porcentaje de cobertura.
-- **Tests generados no se versionan:** `tests_generados/` está en `.gitignore`. Cada ejecución sobreescribe los tests anteriores para el mismo repo.
+- **Tiempo con modelo local:** el agente llama al LLM una vez por función/método. Un repo con 50 funciones puede tardar 20-40 minutos sin GPU dedicada. Con Groq el mismo repo tarda ~5 minutos (sujeto a rate limits).
+- **Calidad de tests:** los tests son generados por un LLM y pueden tener errores lógicos. Revisarlos antes de incorporarlos a un pipeline de CI.
+- **Cobertura Java con errores de compilación:** si los tests Java no compilan, JaCoCo no genera el reporte y la cobertura queda como N/A.
+- **Tests generados no se versionan:** `tests_generados/` está en `.gitignore`. Cada ejecución sobreescribe los tests anteriores.
+
+---
+
+## Licencia
+
+MIT
