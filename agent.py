@@ -111,6 +111,7 @@ def main() -> None:
     terminal_ui.print_step("Generando reporte...")
     report_generator.generate(final, repo.name, elapsed, coverage_pct=coverage_pct)
     terminal_ui.print_ok("Reporte generado: reporte.md")
+    terminal_ui.print_report_preview(final)
 
     passed_final = sum(1 for v in final.values() if v["status"] == "passed")
     failed_final = sum(1 for v in final.values() if v["status"] in ("failed", "error"))

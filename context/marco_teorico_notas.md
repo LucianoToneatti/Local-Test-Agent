@@ -1080,86 +1080,78 @@ tests_generados/integration/
 
 ### Qué se implementó
 
-- **`agent/test_runner.py`**:
-  - `_run_jest()`: cambia de `--no-coverage` a `--coverage --coverageReporters=json-summary`. Jest escribe `coverage/coverage-summary.json` en el directorio de cada config. Retorno cambiado de `dict` a `tuple[dict, float | None]`.
-  - `_parse_jest_coverage(cwd: Path) -> float | None`: nueva función. Lee `coverage/coverage-summary.json` con stdlib `json` y extrae `data["total"]["lines"]["pct"]`. Retorna `None` si el archivo no existe.
-  - `_run_maven()`: retorno cambiado de `dict` a `tuple[dict, float | None]`. Llama a `_parse_jacoco_coverage` después de `_parse_surefire_reports`.
-  - `_parse_jacoco_coverage(maven_root: Path) -> float | None`: nueva función. Lee `target/site/jacoco/jacoco.xml` con `xml.etree.ElementTree` (stdlib, ya importado). Busca `<counter type="LINE" missed="X" covered="Y"/>` en la raíz y calcula `covered / (covered + missed) * 100`. Retorna `None` si el archivo no existe.
-  - `run()`: combina las tres coberturas con prioridad Python → JS → Java (primer no-None). La firma pública `(dict, float | None)` no cambia.
-- **`agent/test_generator.py` — `_write_java_pom()`**: pom.xml ahora incluye el plugin `jacoco-maven-plugin:0.8.11` con dos executions: `prepare-agent` (instrumenta la JVM antes de los tests) y `report` en fase `test` (genera el XML al finalizar). Se agrega comentario al early return explicando el comportamiento idempotente.
-- **`agent/integration_generator.py` — `_write_java_integration_pom()`**: mismo cambio que el pom unitario.
+**`agent/test_runner.py`:**
+- `_run_jest()`: cambia de `--no-coverage` a `--coverage --coverageReporters=json-summary`. Retorno cambiado de `dict` a `tuple[dict, float | None]`.
+- `_parse_jest_coverage(cwd: Path) -> float | None`: lee `coverage/coverage-summary.json` con `json` (stdlib) y extrae `data["total"]["lines"]["pct"]`. Con `rootDir: '../..'`, Jest escribe el archivo en `rootDir/coverage/` (dos niveles arriba de `cwd`). La función prueba ambas ubicaciones: `cwd/coverage/` y `cwd.parent.parent/coverage/`, usando la primera que exista.
+- `_run_maven()`: retorno cambiado a `tuple[dict, float | None]`. Llama a `_parse_jacoco_coverage` tras `_parse_surefire_reports`. Flag `-fae` agregado al comando.
+- `_parse_jacoco_coverage(maven_root: Path) -> float | None`: lee `target/site/jacoco/jacoco.xml` con `xml.etree.ElementTree` (stdlib, ya importado). Calcula `covered / (covered + missed) * 100` del counter `type="LINE"`.
+- `run()`: prioridad Python → JS → Java (primer no-`None` gana).
+
+**`agent/test_generator.py` — `_write_jest_config()`:** configuración Jest final:
+
+```js
+module.exports = {
+  rootDir: '../..',
+  testMatch: ['<rootDir>/tests_generados/unit/**/*.test.{js,ts}'],
+  modulePaths: ['<rootDir>/REPO_RELPATH'],
+  coverageProvider: 'v8',
+  collectCoverageFrom: ['REPO_RELPATH/**/*.{js,ts}'],
+};
+```
+
+`REPO_RELPATH = os.path.relpath(repo, (OUTPUT_DIR / "../..").resolve())`. `rootDir: '../..'` hace que Jest resuelva rutas desde el raíz del proyecto (dos niveles arriba de `tests_generados/unit/`). `coverageProvider: 'v8'` instrumenta sin Babel, evitando el error `Unknown` en cobertura CommonJS. Se agrega `import os` al módulo.
+
+**`agent/test_generator.py` — `_write_java_pom()`** y **`agent/integration_generator.py` — `_write_java_integration_pom()`:** JaCoCo 0.8.13 con dos executions: `prepare-agent` (fase `initialize`) y `report` (fase `test`). Versión 0.8.13 requerida para Java 24 (class file major version 68); versiones anteriores fallan con `Unsupported class file major version 68` porque usan ASM 9.6 que solo soporta hasta Java 21.
+
+**`agent/test_runner.py` — `_run_maven()`:** flag `-fae` (fail at end). Sin `-fae`, Maven aborta al primer test fallido antes de ejecutar el goal `report` de JaCoCo, y `jacoco.xml` no se genera. Con `-fae`, Maven ejecuta todos los tests y luego corre `report`, generando el XML aunque haya failures. Nota: `-fae` no ayuda con errores de compilación — `test-compile` fallando aborta Maven igual.
+
+**`agent/llm_client.py` — `GroqClient.generate()`:** fix del retry para HTTP 429.
+- **Regex:** `_GROQ_RETRY_PAT = re.compile(r"try again in (?:(\d+)m\s*)?([\d.]+)s")` con grupo opcional de minutos. `_parse_groq_retry_seconds` calcula `minutes * 60 + seconds + 1.0`. El patrón anterior (`r"try again in ([\d.]+)s"`) fallaba con el formato `"2m0.394s"` que Groq devuelve para rate limits de más de un minuto — cuando fallaba se usaba el default de 20s, insuficiente, y los 3 reintentos se agotaban en ~40s crasheando con `GroqAPIError (429)`.
+- **Reestructura del loop:** `if e.code != 429: raise` se evalúa primero (cualquier error no-429 se propaga inmediatamente). Para 429: se parsea la espera, se actualiza `last_exc`, si `attempt < 2` se duerme. El `raise last_exc` post-loop es el único punto de salida para 429 agotado. La implementación anterior tenía un `raise GroqAPIError(...)` incondicional dentro del `except` que impedía que `raise last_exc` fuera alcanzado para el caso 429.
+
+**`agent/test_generator.py` — `_fix_java_file_with_llm()`:** el system prompt del ciclo de compilación-corrección ahora incluye las mismas reglas de `JavaPromptTemplate._SYSTEM`: prohibición de JUnit 4, lista explícita de assertions válidos (`assertEquals`, `assertTrue`, `assertFalse`, `assertNull`, `assertNotNull`, `assertThrows`), prohibición de `L` suffix, `Int.`, `DELTA`, `null` a primitivos, `Double.INFINITY`, `ExecutableAssert` (AssertJ), variables no declaradas. Más la regla nueva: `"Do NOT add any import statement that is not already present in the original file."` El prompt anterior (`"You are a Java expert. Fix the compilation errors."`) sin restricciones de framework hacía que el LLM reintrodujera imports de AssertJ/JUnit 4 inexistentes en el pom.xml, generando nuevos errores de compilación distintos a los originales.
 
 Sin cambios en `agent.py`, `report_generator.py` ni `terminal_ui.py`: el valor `coverage_pct: float | None` ya fluye correctamente y el "N/A" cuando es `None` ya estaba implementado.
 
 ### Decisiones de diseño
 
-**Prioridad de cobertura Python → JS → Java:**
-Si un repo tiene solo Python, el comportamiento es idéntico al anterior. Si tiene solo JS o solo Java, la cobertura de ese lenguaje aparece en el reporte. En repos mixtos, Python tiene prioridad porque es el lenguaje con mayor madurez de cobertura en el agente. Esta regla es simple, predecible y sin cambios de firma pública.
+**`coverageProvider: 'v8'` en lugar de `transform: {}`:**
+La primera aproximación fue desactivar Babel con `transform: {}`. El problema raíz era que Istanbul (el instrumentador de cobertura de Jest) llamaba a Babel para transformar los archivos fuente antes de instrumentarlos, y Babel fallaba con CommonJS plano reportando `Unknown`. `coverageProvider: 'v8'` usa el coverage nativo de Node.js (V8) en lugar de Istanbul — sin necesidad de transformar nada — eliminando la causa raíz en lugar de desactivar el transformador.
 
-**`--coverage --coverageReporters=json-summary` en Jest:**
-El formato `json-summary` produce un único archivo JSON pequeño con los totales globales, a diferencia de `json` (que incluye cobertura línea por línea, archivo por archivo). El agente solo necesita el porcentaje total — `json-summary` es suficiente y no genera ruido en el directorio de salida.
+**`rootDir: '../..'` y rutas relativas:**
+Jest calcula `collectCoverageFrom` relativo a `rootDir`. Con `rootDir: '.'` (la configuración anterior), la ruta absoluta del repo en `collectCoverageFrom` hacía que Jest reportara `Unknown` porque no podía correlacionar los archivos instrumentados con las entradas del coverage. Con `rootDir: '../..'` apuntando al raíz del proyecto, `REPO_RELPATH` (calculado con `os.path.relpath`) da una ruta relativa válida que Jest resuelve correctamente. El `coverage-summary.json` se genera en `rootDir/coverage/`, que es `cwd.parent.parent/coverage/` desde el punto de vista del proceso Jest.
+
+**`testMatch` explícito:**
+Con `rootDir: '../..'`, Jest escanearia recursivamente desde el raíz del proyecto buscando archivos de test, encontrando potencialmente `package.json` malformados u otros archivos. El `testMatch` explícito restringe la búsqueda a `tests_generados/unit/`.
+
+**`_parse_jest_coverage` busca en dos ubicaciones:**
+Mantiene backward compatibility con configuraciones anteriores que escribían coverage en `cwd/coverage/`, mientras soporta la nueva config con `rootDir: '../..'` que escribe en `cwd.parent.parent/coverage/`. No requiere saber qué versión de config está activa — prueba ambas en orden.
+
+**JaCoCo 0.8.13 requerido para Java 24:**
+JaCoCo instrumenta el bytecode Java en tiempo de ejecución vía Java agent. El agente intercepta todo el class loading de la JVM, incluyendo clases del runtime Java 24 compiladas a version 68. ASM 9.6 (bundled en JaCoCo ≤0.8.11) no conoce la version 68 y lanza `Unsupported class file major version 68`. JaCoCo 0.8.13 usa ASM 9.7.1 que soporta Java 24. Diagnóstico post-fix: `jacoco.exec` se genera correctamente; `jacoco.xml` no se genera si `test-compile` falla antes de la fase `test` (Maven aborta antes del goal `report`).
 
 **JaCoCo vía ciclo de vida Maven (no `mvn test jacoco:report`):**
-Configurar JaCoCo con goals ligados a las fases `initialize` (prepare-agent) y `test` (report) hace que `mvn test --batch-mode` genere el XML automáticamente sin cambiar el comando que ya usa el agente. La alternativa `mvn test jacoco:report` habría requerido modificar el comando en `_run_maven()`.
+Configurar JaCoCo con goals ligados a las fases `initialize` (prepare-agent) y `test` (report) hace que `mvn test --batch-mode -fae` genere el XML automáticamente sin modificar el comando en `_run_maven()`. La alternativa `mvn test jacoco:report` habría requerido cambiar la invocación de Maven.
 
-**`xml.etree.ElementTree` para jacoco.xml:**
-El módulo ya estaba importado en `test_runner.py` para parsear los XMLs de Surefire. Sin dependencias nuevas.
+**Prioridad Python → JS → Java:**
+En repos mono-lenguaje, solo hay una cobertura disponible. En repos mixtos, Python tiene prioridad porque es el lenguaje con mayor madurez de cobertura en el agente. La lógica `py_cov if py_cov is not None else (js_cov if js_cov is not None else java_cov)` no cambia la firma pública de `run()`.
 
-**Comportamiento N/A cuando no hay cobertura:**
-Si Jest no genera el JSON (config personalizada, error durante coverage), `_parse_jest_coverage` retorna `None`. Si JaCoCo no genera el XML (Maven falló antes de la fase test, pom viejo sin JaCoCo), `_parse_jacoco_coverage` retorna `None`. En ambos casos el agente termina normalmente mostrando "Cobertura: N/A" en el reporte.
-
-**Pom idempotente — early return documentado:**
-El early return en `_write_java_pom()` y `_write_java_integration_pom()` evita sobreescribir el pom en runs incrementales (cuando se agregan archivos Java al repo sin borrar `tests_generados/`). El comentario agregado documenta que para actualizar el pom (ej. después de un cambio en el agente) hay que borrar `tests_generados/`.
+**Sin dependencias externas nuevas:**
+`json`, `xml.etree.ElementTree`, `os.path.relpath` son stdlib de Python. `v8` es el coverage nativo de Node.js/Jest. JaCoCo se descarga via Maven igual que JUnit.
 
 ### Conceptos teóricos aplicados
 
-- **JaCoCo (Java Code Coverage)**: instrumenta el bytecode Java en tiempo de ejecución vía Java agent (`-javaagent:jacocoagent.jar`). El goal `prepare-agent` configura el argumento `-javaagent` en el Surefire plugin automáticamente. Al terminar los tests, el goal `report` lee el binario `jacoco.exec` y genera `jacoco.xml` con contadores `LINE`, `BRANCH`, `METHOD`, `CLASS` y `INSTRUCTION`.
-- **`coverage-summary.json` de Jest**: producido por el reporter `json-summary` de Istanbul (bundled en Jest). El objeto `total` agrega líneas, statements, functions y branches de todos los archivos del proyecto. `lines.pct` es el porcentaje de líneas ejecutables que fueron ejecutadas al menos una vez por los tests.
-- **Ciclo de vida Maven**: Maven ejecuta goals en fases ordenadas (validate → initialize → compile → test-compile → test → ...). Ligar `prepare-agent` a `initialize` garantiza que JaCoCo instrumenta la JVM antes de que Surefire arranque los tests; ligar `report` a `test` garantiza que el XML se genera al terminar la misma fase.
+- **Istanbul vs. V8 coverage:** Istanbul transforma el AST del archivo fuente para agregar contadores antes de ejecutarlo (requiere Babel o esbuild). V8 coverage usa la API de cobertura nativa del motor JavaScript, que registra qué rangos de bytecode se ejecutaron sin transformar el AST. Para CommonJS plano sin transpilación, V8 es más robusto.
+- **JaCoCo y el ciclo de vida Maven:** `prepare-agent` agrega `-javaagent:jacocoagent.jar` a los argumentos de la JVM que Surefire arranca. Al finalizar los tests, el agente escribe `jacoco.exec` (binario). El goal `report` lee ese binario y genera `jacoco.xml` con contadores por tipo (`LINE`, `BRANCH`, `METHOD`). Ligar ambos goals al ciclo de vida hace que `mvn test --batch-mode -fae` sea suficiente.
+- **`coverage-summary.json` de Jest:** producido por el reporter `json-summary`. El objeto `total` agrega líneas, statements, functions y branches de todos los archivos. `lines.pct` es el porcentaje de líneas ejecutables ejecutadas al menos una vez.
+- **Rate limiting y backoff con Groq:** los límites del tier gratuito son por minuto (TPM y RPM). Parsear el tiempo exacto del mensaje de error (`"try again in Xm Ys"`) y dormir ese valor es más eficiente que un backoff fijo cuando el wait es de minutos.
+- **`-fae` (Maven fail at end):** mecanismo de Maven para ejecutar todos los módulos de un reactor aunque algunos fallen. En proyectos de un solo módulo (el caso del agente), garantiza que Maven no aborte al primer test fallido y ejecuta todas las fases del ciclo de vida incluyendo los goals ligados a la fase `test`.
 
----
+### Deuda técnica / pendientes
 
-## Fix — Groq 429 retry: regex para formato minutos y reestructura del loop (2026-06-10)
-
-**Archivos:** `agent/llm_client.py`
-
-**Problema 1 — regex incompleto:** `_GROQ_RETRY_PAT = re.compile(r"try again in ([\d.]+)s")` solo matcheaba segundos puros (`"17.32s"`). Groq devuelve formato mixto para esperas largas (`"2m0.394s"`, `"1m43s"`). Cuando el regex fallaba, se usaba el default de 20s — insuficiente para rate limits de minutos. Los 3 reintentos se agotaban en ~40s y el agente crasheaba con `GroqAPIError (429)`.
-
-**Fix:** nuevo patrón `r"try again in (?:(\d+)m\s*)?([\d.]+)s"` con grupo opcional para minutos. `_parse_groq_retry_seconds` ahora calcula `minutes * 60 + seconds + 1.0`.
-
-**Problema 2 — `raise` inline mezclado:** cuando `e.code == 429` y `attempt == 2`, la ejecución caía a un `raise GroqAPIError(...)` incondicional dentro del `except`, mezclando "error de otro código HTTP" con "429 agotado". El `raise last_exc` al final del loop nunca se alcanzaba para 429.
-
-**Fix:** reestructura del loop: `if e.code != 429: raise ...` primero (errores no-429 se lanzan inmediatamente); para 429 se parsea el wait, se actualiza `last_exc`, y si `attempt < 2` se duerme. El `raise last_exc` post-loop es el único punto de salida para 429 agotado.
-
----
-
-## Fix — Maven -fae para cobertura con test failures (2026-06-10)
-
-**Archivo:** `agent/test_runner.py`, línea 188.
-
-Cambio: `["mvn", "test", "--batch-mode"]` → `["mvn", "test", "--batch-mode", "-fae"]`.
-
-`-fae` (fail at end) hace que Maven continúe ejecutando todos los tests aunque algunos fallen, en lugar de abortar al primer fallo. Esto permite que JaCoCo `report` (ligado a la fase `test`) se ejecute y genere `jacoco.xml` aunque haya test failures. Sin `-fae`, Maven aborta y el XML nunca se genera. Nota: `-fae` no ayuda con errores de compilación (`test-compile` fallando aborta igual).
-
----
-
-## Fix — JaCoCo 0.8.11 → 0.8.13 para Java 24 (2026-06-10)
-
-**Archivos:** `agent/test_generator.py` (`_write_java_pom`), `agent/integration_generator.py` (`_write_java_integration_pom`).
-
-Java 24 = class file major version 68. JaCoCo 0.8.11 usa ASM 9.6 que solo soporta hasta Java 21 (version 65). El error `Unsupported class file major version 68` ocurre porque el agente JaCoCo intercepta todo el class loading del JVM Java 24, incluyendo clases sintéticas generadas a version 68. JaCoCo 0.8.13 (noviembre 2024, ASM 9.7.1) es la última versión estable disponible — soporta hasta Java 23 de forma completa pero tiene mejor manejo del runtime Java 24.
-
-**Diagnóstico post-fix:** `jacoco.exec` se genera en ambos proyectos (confirmando que el agente JaCoCo 0.8.13 carga correctamente en Java 24). `jacoco.xml` no se genera porque `test-compile` falla por imports inválidos en los tests generados, abortando Maven antes de la fase `test` donde corre el goal `report`.
-
----
-
-## Fix — Prompt de corrección Java sin restricciones de JUnit 5 (2026-06-10)
-
-**Archivo:** `agent/test_generator.py`, función `_fix_java_file_with_llm`.
-
-El ciclo de compilación-corrección (`_compile_and_fix_java`) enviaba al LLM un prompt con solo `"You are a Java expert. Fix the compilation errors."` — sin ninguna restricción de framework. El LLM inventaba imports y métodos inexistentes (`ThrowingRunnable`, `catchException` de AssertJ/JUnit 4) que no están en el pom.xml, reintroduciendo errores de compilación distintos.
-
-**Fix:** el system prompt del corrector ahora incluye las mismas reglas de `JavaPromptTemplate._SYSTEM` que ya funcionan para generación: prohibición de JUnit 4, lista explícita de assertions válidos (`assertEquals`, `assertTrue`, `assertFalse`, `assertNull`, `assertNotNull`, `assertThrows`), prohibición de literales `L`, `Int.`, `DELTA`, null a primitivos, variables no declaradas. Más la regla nueva: `"Do NOT add any import statement that is not already present in the original file."` — apunta directamente a la causa raíz del problema.
+- `jacoco.xml` no se genera si `test-compile` falla antes de la fase `test` — los tests con errores de compilación no contribuyen al coverage Java.
+- `_parse_jest_coverage` prueba las dos ubicaciones posibles pero no informa cuál encontró. Si la ubicación cambia en el futuro, puede buscar en el lugar incorrecto silenciosamente.
+- Los tests JS/TS con `coverageProvider: 'v8'` requieren Node.js ≥18 (V8 coverage API estable). En versiones anteriores puede reportar resultados incompletos.
 
 ---
 

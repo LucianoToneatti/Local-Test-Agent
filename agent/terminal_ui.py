@@ -8,15 +8,31 @@ RED = "\033[31m"
 YELLOW = "\033[33m"
 CYAN = "\033[36m"
 BOLD = "\033[1m"
+DIM = "\033[2m"
 RESET = "\033[0m"
+
+BANNER = r"""
+  __  __       _ _   _       _
+ |  \/  |_   _| | |_(_)     | |    __ _ _ __   __ _ _   _  __ _  __ _  ___
+ | |\/| | | | | | __| |_____| |   / _` | '_ \ / _` | | | |/ _` |/ _` |/ _ \
+ | |  | | |_| | | |_| |_____| |__| (_| | | | | (_| | |_| | (_| | (_| |  __/
+ |_|  |_|\__,_|_|\__|_|     |_____\__,_|_| |_|\__, |\__,_|\__,_|\__, |\___|
+                                               |___/             |___/
+  _____         _        _                    _
+ |_   _|__  ___| |_     / \   __ _  ___ _ __ | |_
+   | |/ _ \/ __| __|   / _ \ / _` |/ _ \ '_ \| __|
+   | |  __/\__ \ |_   / ___ \ (_| |  __/ | | | |_
+   |_|\___||___/\__| /_/   \_\__, |\___|_| |_|\__|
+                             |___/
+"""
 
 
 def print_title(agent_name: str, version: str) -> None:
-    title = f"  {agent_name} {version}  "
-    border = "+" + "-" * len(title) + "+"
-    print(f"\n{BOLD}{CYAN}{border}{RESET}")
-    print(f"{BOLD}{CYAN}|{title}|{RESET}")
-    print(f"{BOLD}{CYAN}{border}{RESET}\n")
+    print()
+    for line in BANNER.splitlines():
+        print(f"{GREEN}{line}{RESET}")
+    print(f"{DIM}{version}{RESET}")
+    print()
 
 
 def print_progress(current: int, total: int, label: str = "") -> None:
@@ -81,6 +97,48 @@ def print_summary(
         print(f"  Cobertura:    {coverage_pct:.0f}%")
     print(f"  Tiempo:       {format_elapsed(elapsed)}")
     print()
+
+
+def print_report_preview(final: dict) -> None:
+    """Imprime un preview de posibles bugs y sin resolver antes del resumen final."""
+    bug_items = [(tid, v) for tid, v in final.items() if v["status"] == "posible_bug"]
+    unresolved_items = [(tid, v) for tid, v in final.items() if v["status"] == "sin_resolver"]
+
+    if not bug_items and not unresolved_items:
+        return
+
+    print(f"\n{BOLD}+--- Preview del reporte ---+{RESET}")
+
+    if bug_items:
+        print(f"  {RED}Posibles bugs ({len(bug_items)}):{RESET}")
+        for tid, v in bug_items:
+            expected = v.get("expected") or "?"
+            actual = v.get("actual") or "?"
+            print(f"    {RED}[BUG]{RESET} {tid}")
+            print(f"          Esperado: {expected} — Obtenido: {actual}")
+
+    if unresolved_items:
+        if bug_items:
+            print()
+        print(f"  {YELLOW}Sin resolver ({len(unresolved_items)}):{RESET}")
+        for tid, v in unresolved_items:
+            tb = v.get("traceback")
+            if not tb:
+                attempts_list = v.get("attempts", [])
+                if attempts_list and isinstance(attempts_list[0], dict):
+                    tb = attempts_list[0].get("traceback")
+            last_line = _last_traceback_line(tb)
+            print(f"    {YELLOW}[WARN]{RESET} {tid}")
+            print(f"           {last_line}")
+
+    print(f"{BOLD}+---------------------------+{RESET}\n")
+
+
+def _last_traceback_line(traceback: str | None) -> str:
+    if not traceback:
+        return "sin mensaje de error"
+    lines = [ln for ln in traceback.strip().splitlines() if ln.strip()]
+    return lines[-1] if lines else "sin mensaje de error"
 
 
 def format_elapsed(seconds: float) -> str:
