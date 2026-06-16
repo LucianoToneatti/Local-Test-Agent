@@ -513,7 +513,7 @@ def test_generate_js_creates_jest_config(tmp_path, monkeypatch):
     jest_config = tmp_path / "tests_generados" / "unit" / "jest.config.js"
     assert jest_config.exists()
     content = jest_config.read_text()
-    assert "rootDir: '.'" in content
+    assert "rootDir: '../..'" in content
     assert "modulePaths" in content
 
 
@@ -766,7 +766,8 @@ def test_generate_java_test_file_has_junit_header(tmp_path, monkeypatch):
     repo = _make_repo_with_java_calc(tmp_path / "repo")
     ast_result = _make_java_ast_result()
 
-    with patch("agent.test_generator.LLMClient") as MockClient:
+    with patch("agent.test_generator.LLMClient") as MockClient, \
+         patch("agent.test_generator.shutil.which", return_value=None):
         MockClient.return_value.generate.return_value = VALID_JAVA_BLOCK
         generate(repo, ast_result)
 

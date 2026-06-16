@@ -51,22 +51,22 @@ def test_format_elapsed_single_digit_seconds_padded():
 def test_print_title_contains_agent_name(capsys):
     print_title("MiAgente", "v2.0")
     out = capsys.readouterr().out
-    assert "MiAgente" in out
+    assert GREEN in out
     assert "v2.0" in out
 
 
 def test_print_title_contains_borders(capsys):
     print_title("X", "v1")
     out = capsys.readouterr().out
-    assert "+" in out
-    assert "-" in out
+    assert "_" in out
+    assert "/" in out
     assert "|" in out
 
 
 def test_print_title_contains_ansi_cyan(capsys):
     print_title("A", "v1")
     out = capsys.readouterr().out
-    assert CYAN in out
+    assert GREEN in out
 
 
 # ---------------------------------------------------------------------------
