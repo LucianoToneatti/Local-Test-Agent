@@ -69,7 +69,8 @@ def generate(repo_path: str, ast_result: dict, progress_callback=None, client=No
         if progress_callback:
             progress_callback(idx, total, f"{stem_a}+{stem_b}")
 
-    _write_conftest(repo)
+    if any(k.endswith(".py") for k in ast_result):
+        _write_conftest(repo)
 
     for (a_path, b_path) in js_pairs:
         idx += 1

@@ -403,7 +403,7 @@ def test_run_jest_no_node_prints_error(tmp_path, capsys):
     (tmp_path / "calc.test.js").write_text("test('x', () => {})")
     with patch("agent.test_runner.shutil.which", return_value=None):
         from agent.test_runner import _run_jest
-        result = _run_jest(str(tmp_path))
+        result, _ = _run_jest(str(tmp_path))
     assert result == {}
     captured = capsys.readouterr()
     assert "Node.js" in captured.out
@@ -411,7 +411,7 @@ def test_run_jest_no_node_prints_error(tmp_path, capsys):
 
 def test_run_jest_no_js_files_returns_empty(tmp_path):
     from agent.test_runner import _run_jest
-    result = _run_jest(str(tmp_path))
+    result, _ = _run_jest(str(tmp_path))
     assert result == {}
 
 
@@ -421,7 +421,7 @@ def test_run_jest_no_js_files_returns_empty(tmp_path):
 
 def test_run_maven_no_java_files_returns_empty(tmp_path):
     from agent.test_runner import _run_maven
-    result = _run_maven(str(tmp_path))
+    result, _ = _run_maven(str(tmp_path))
     assert result == {}
 
 
@@ -432,7 +432,7 @@ def test_run_maven_no_mvn_prints_message(tmp_path, capsys):
 
     with patch("agent.test_runner.shutil.which", return_value=None):
         from agent.test_runner import _run_maven
-        result = _run_maven(str(tmp_path))
+        result, _ = _run_maven(str(tmp_path))
 
     assert result == {}
     captured = capsys.readouterr()

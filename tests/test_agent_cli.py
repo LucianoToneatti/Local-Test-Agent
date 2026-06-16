@@ -26,7 +26,7 @@ def _make_mocks(tmp_path):
     llm_mock = MagicMock()
     llm_mock.return_value.is_available.return_value = True
     return {
-        "llm": patch("agent_main.LLMClient", llm_mock),
+        "llm": patch("agent_main.create_client", llm_mock),
         "explore": patch("agent_main.explore", return_value=[]),
         "extract": patch("agent_main.extract", return_value={}),
         "generate_unit": patch("agent_main.generate_unit"),
