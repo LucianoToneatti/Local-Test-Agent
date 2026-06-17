@@ -139,6 +139,8 @@ source venv/bin/activate
 python3 agent.py --repo ./ruta/al/repositorio
 ```
 
+> **Nota:** el repositorio a analizar debe usar solo la biblioteca estándar del lenguaje (sin dependencias externas como pip packages, npm modules o Maven dependencies de terceros).
+
 ### Python
 
 ```bash
@@ -370,6 +372,7 @@ Local-Test-Agent/
 - **Calidad de tests:** los tests son generados por un LLM y pueden tener errores lógicos. Revisarlos antes de incorporarlos a un pipeline de CI.
 - **Cobertura Java con errores de compilación:** si los tests Java no compilan, JaCoCo no genera el reporte y la cobertura queda como N/A.
 - **Tests generados no se versionan:** `tests_generados/` está en `.gitignore`. Cada ejecución sobreescribe los tests anteriores.
+- **Repos sin dependencias externas:** el agente está diseñado para repositorios que usan solo la biblioteca estándar del lenguaje. Si el código fuente importa librerías externas (como `requests`, `pandas`, `express`, `Spring`, etc.), los tests generados fallarán porque esas dependencias no estarán disponibles en el entorno de ejecución de los tests.
 
 ---
 
