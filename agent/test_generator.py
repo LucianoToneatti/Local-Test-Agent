@@ -72,13 +72,14 @@ def generate(repo_path: str, ast_result: dict, progress_callback=None, client=No
 
             blocks = _generate_blocks_for_file(client, repo, rel_path, file_info, language)
             if blocks:
-                module_name = Path(rel_path).stem
+                stem = Path(rel_path).stem
                 if language == "javascript":
-                    header = _build_js_import_header(module_name, file_info)
-                    out_file = OUTPUT_DIR / f"{module_name}.test.js"
+                    header = _build_js_import_header(stem, file_info)
+                    out_file = OUTPUT_DIR / f"{stem}.test.js"
                 else:
-                    header = _build_import_header(module_name, file_info)
-                    out_file = OUTPUT_DIR / f"test_{module_name}.py"
+                    import_path = Path(rel_path).with_suffix("").as_posix().replace("/", ".")
+                    header = _build_import_header(import_path, file_info)
+                    out_file = OUTPUT_DIR / f"test_{stem}.py"
                 out_file.write_text(header + "\n\n" + "\n\n".join(blocks) + "\n")
 
         if progress_callback:

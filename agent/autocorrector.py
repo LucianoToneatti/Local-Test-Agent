@@ -24,6 +24,7 @@ from prompts.prompt_builder import CorrectionPromptTemplate, clean_response
 
 _TEMPLATE = CorrectionPromptTemplate()
 _MAX_ATTEMPTS = 3
+_MAX_AUTOCORRECT = 30
 
 # Patrones para detectar comparaciones de valores en AssertionError.
 # Grupo 1 = valor izquierdo/esperado, Grupo 2 = valor derecho/obtenido.
@@ -65,10 +66,29 @@ def autocorrect(results: dict, repo_path: str, client=None) -> dict:
         client = LLMClient()
     final = dict(results)
 
+    failed_ids = [
+        tid for tid, info in results.items()
+        if info["status"] in ("failed", "error")
+    ]
+    to_correct = set(failed_ids[:_MAX_AUTOCORRECT])
+
     for test_id, info in results.items():
         if info["status"] not in ("failed", "error"):
             continue
-        if _classify_error(info.get("traceback")) == "posible_bug":
+
+        if test_id not in to_correct:
+            final[test_id] = {
+                "status": "sin_resolver",
+                "traceback": info.get("traceback"),
+                "reason": "omitido_por_volumen",
+            }
+        elif _is_import_error(info.get("traceback")):
+            final[test_id] = {
+                "status": "sin_resolver",
+                "traceback": info.get("traceback"),
+                "reason": "import_error",
+            }
+        elif _classify_error(info.get("traceback")) == "posible_bug":
             final[test_id] = _mark_as_possible_bug(info)
         else:
             final[test_id] = _correct_test(client, test_id, info, repo_path)
@@ -76,7 +96,15 @@ def autocorrect(results: dict, repo_path: str, client=None) -> dict:
     return final
 
 
+_IMPORT_ERROR_PAT = re.compile(r'\b(ModuleNotFoundError|ImportError)\b')
+
 _JUNIT_ASSERT_PAT = re.compile(r'expected:\s*<[^>]+>\s*but was:\s*<[^>]+>', re.IGNORECASE)
+
+
+def _is_import_error(traceback: str | None) -> bool:
+    if not traceback:
+        return False
+    return bool(_IMPORT_ERROR_PAT.search(traceback))
 
 
 def _classify_error(traceback: str | None) -> str:

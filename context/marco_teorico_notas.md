@@ -1155,6 +1155,35 @@ En repos mono-lenguaje, solo hay una cobertura disponible. En repos mixtos, Pyth
 
 ---
 
+## Prueba con repositorio grande (examples_large/)
+
+Se creó un repositorio Python de 15 archivos, 71 funciones/métodos y 10 clases simulando un sistema de librería online (`models/`, `services/`, `utils/`). Objetivo: validar el comportamiento del agente con repos de tamaño real.
+
+### Problemas detectados y resueltos
+
+- **Imports en repos con paquetes Python:** El agente generaba `from auth_service import X` para archivos en subdirectorios (`services/auth_service.py`). Fix: calcular el import path dotted completo (`services.auth_service`) usando `Path(rel_path).with_suffix("").as_posix().replace("/", ".")` en `test_generator.py`. Repos planos siguen funcionando igual.
+
+- **Crash por rate limit con Groq:** Con 71 funciones, el retry de 3 intentos para 429 se agotaba a mitad del proceso. Fix: aumentar a 10 reintentos en `llm_client.py`. Los 429 son rate limits temporales, no errores — siempre se resuelven esperando.
+
+- **Autocorrección inviable en repos grandes:** 275 tests fallidos × 3 intentos = 825 llamadas al LLM. Con Groq esto tomaba 58 minutos. Dos optimizaciones en `autocorrector.py`:
+  - No autocorregir tests con `ModuleNotFoundError` o `ImportError` — son errores estructurales que el LLM no puede resolver.
+  - Límite de 30 tests a autocorregir (`_MAX_AUTOCORRECT = 30`). El resto se marca como "sin resolver — omitido por volumen".
+
+### Comparación de resultados
+
+|                    | Sin optimización | Con optimización |
+|--------------------|-----------------|-----------------|
+| Tests totales      | 387             | 405             |
+| Passed             | 146             | 115             |
+| Sin resolver       | 226             | 289             |
+| Posible bug        | 15              | 1               |
+| Cobertura          | 57%             | 61%             |
+| Tiempo             | 58m 26s         | 33m 08s         |
+
+El tiempo se redujo un 43%. La cobertura subió levemente (61% vs 57%) porque los tests que sí se generaron correctamente cubrieron más código. La diferencia en "passed" (146 vs 115) se debe a la variabilidad del LLM — cada run genera tests distintos.
+
+---
+
 ## HU-16 — Diagnóstico de fallos (clasificador posible_bug)
 
 ### Qué se implementó

@@ -136,7 +136,7 @@ class GroqClient:
         )
 
         last_exc: Exception = GroqAPIError("sin intentos")
-        for attempt in range(3):
+        for attempt in range(10):
             try:
                 with urllib.request.urlopen(req) as resp:
                     body = resp.read().decode("utf-8")
@@ -149,9 +149,9 @@ class GroqClient:
                 body = e.read().decode("utf-8")
                 wait = _parse_groq_retry_seconds(body)
                 last_exc = GroqAPIError(
-                    f"Error de Groq API (429): rate limit — intento {attempt + 1}/3"
+                    f"Error de Groq API (429): rate limit — intento {attempt + 1}/10"
                 )
-                if attempt < 2:
+                if attempt < 9:
                     time.sleep(wait)
             except urllib.error.URLError as e:
                 raise GroqAPIError(f"No se pudo conectar con Groq: {e.reason}") from e
