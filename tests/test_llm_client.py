@@ -131,10 +131,10 @@ def test_retry_429_uses_default_when_no_seconds_in_body(monkeypatch):
     assert slept[0] == pytest.approx(float(_GROQ_RETRY_DEFAULT))
 
 
-def test_retry_429_raises_after_three_failures(monkeypatch):
+def test_retry_429_raises_after_ten_failures(monkeypatch):
     body_429 = '{"error": {"message": "Please try again in 5.0s"}}'
     # Crear un objeto distinto por intento para que e.read() no se agote
-    calls = [_make_http_error(429, body_429) for _ in range(3)]
+    calls = [_make_http_error(429, body_429) for _ in range(10)]
     slept: list[float] = []
 
     def fake_urlopen(req, **kwargs):
@@ -147,7 +147,7 @@ def test_retry_429_raises_after_three_failures(monkeypatch):
     with pytest.raises(GroqAPIError, match="429"):
         client.generate("hola")
 
-    assert len(slept) == 2
+    assert len(slept) == 9
 
 
 def test_non_429_error_raises_immediately(monkeypatch):

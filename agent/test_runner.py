@@ -195,6 +195,11 @@ def _run_maven(tests_dir: str) -> tuple[dict, float | None]:
             text=True,
             cwd=str(maven_root),
         )
+        subprocess.run(
+            ["mvn", "jacoco:report", "--batch-mode"],
+            text=True,
+            cwd=str(maven_root),
+        )
         surefire_dir = maven_root / "target" / "surefire-reports"
         results.update(_parse_surefire_reports(surefire_dir))
         if coverage_pct is None:
