@@ -1130,8 +1130,8 @@ Mantiene backward compatibility con configuraciones anteriores que escribían co
 **JaCoCo 0.8.13 requerido para Java 24:**
 JaCoCo instrumenta el bytecode Java en tiempo de ejecución vía Java agent. El agente intercepta todo el class loading de la JVM, incluyendo clases del runtime Java 24 compiladas a version 68. ASM 9.6 (bundled en JaCoCo ≤0.8.11) no conoce la version 68 y lanza `Unsupported class file major version 68`. JaCoCo 0.8.13 usa ASM 9.7.1 que soporta Java 24. Diagnóstico post-fix: `jacoco.exec` se genera correctamente; `jacoco.xml` no se genera si `test-compile` falla antes de la fase `test` (Maven aborta antes del goal `report`).
 
-**JaCoCo vía ciclo de vida Maven (no `mvn test jacoco:report`):**
-Configurar JaCoCo con goals ligados a las fases `initialize` (prepare-agent) y `test` (report) hace que `mvn test --batch-mode -fae` genere el XML automáticamente sin modificar el comando en `_run_maven()`. La alternativa `mvn test jacoco:report` habría requerido cambiar la invocación de Maven.
+**JaCoCo con dos `subprocess.run` separados:**
+`_run_maven()` ejecuta primero `mvn test --batch-mode -fae` (puede fallar, no importa) y luego, en una llamada independiente, `mvn jacoco:report --batch-mode`, que lee el `jacoco.exec` ya generado por el primer comando y produce `jacoco.xml` sin importar si los tests pasaron. Esto reemplaza el enfoque anterior de un solo comando (`mvn test jacoco:report --batch-mode -fae` o confiar en que ambos goals estén ligados al ciclo de vida de la fase `test`): `-fae` solo afecta el orden entre **módulos** de un reactor Maven, no entre **goals** de la misma fase — cuando Surefire falla en la fase `test`, Maven aborta los goals restantes de esa fase (incluyendo `jacoco:report`) aunque se pase `-fae`. Separar en dos invocaciones de Maven garantiza que el segundo comando corra siempre, independientemente del resultado del primero.
 
 **Prioridad Python → JS → Java:**
 En repos mono-lenguaje, solo hay una cobertura disponible. En repos mixtos, Python tiene prioridad porque es el lenguaje con mayor madurez de cobertura en el agente. La lógica `py_cov if py_cov is not None else (js_cov if js_cov is not None else java_cov)` no cambia la firma pública de `run()`.
@@ -1149,7 +1149,7 @@ En repos mono-lenguaje, solo hay una cobertura disponible. En repos mixtos, Pyth
 
 ### Deuda técnica / pendientes
 
-- `jacoco.xml` no se genera si `test-compile` falla antes de la fase `test` — los tests con errores de compilación no contribuyen al coverage Java.
+- `jacoco.xml` **sí** se genera cuando hay test failures (Surefire falla en la fase `test`, pero el segundo `subprocess.run` de `mvn jacoco:report` corre después y lee el `jacoco.exec` ya escrito). Pero **no** se genera si `test-compile` falla antes de llegar a ejecutar los tests — `jacoco.exec` nunca se crea porque la JVM instrumentada por el agente de JaCoCo jamás llega a correr, así que no hay nada que leer en el segundo comando.
 - `_parse_jest_coverage` prueba las dos ubicaciones posibles pero no informa cuál encontró. Si la ubicación cambia en el futuro, puede buscar en el lugar incorrecto silenciosamente.
 - Los tests JS/TS con `coverageProvider: 'v8'` requieren Node.js ≥18 (V8 coverage API estable). En versiones anteriores puede reportar resultados incompletos.
 
@@ -1162,6 +1162,12 @@ Se creó un repositorio Python de 15 archivos, 71 funciones/métodos y 10 clases
 ### Problemas detectados y resueltos
 
 - **Imports en repos con paquetes Python:** El agente generaba `from auth_service import X` para archivos en subdirectorios (`services/auth_service.py`). Fix: calcular el import path dotted completo (`services.auth_service`) usando `Path(rel_path).with_suffix("").as_posix().replace("/", ".")` en `test_generator.py`. Repos planos siguen funcionando igual.
+
+- **`require()` en repos con subdirectorios JavaScript:** el mismo problema de imports existía para JS. `require('libro')` fallaba para archivos en `models/libro.js` porque el agente solo usaba el stem del archivo. Fix: usar `Path(rel_path).with_suffix("").as_posix()` (la ruta relativa completa, p. ej. `models/libro`) en lugar del stem al construir el `require()` en `generate()` de `test_generator.py`.
+
+- **Nombre de clase Java no coincide tras autocorrección:** el LLM a veces generaba `public class ValidadorTests` cuando el archivo se llamaba `ValidadorTest.java`. Java exige que el nombre de la clase pública coincida con el nombre del archivo, así que esto rompía la compilación. Fix: `re.sub(r'class\s+\w+', f'class {expected_class_name}', code, count=1)` en `_compile_and_fix_java` de `test_generator.py`, forzando que el nombre de la clase coincida con el stem del archivo después de cada corrección del LLM.
+
+- **JaCoCo no generaba reporte con test failures:** `jacoco.xml` no se generaba cuando había tests fallidos porque `-fae` no funciona entre goals de la misma fase en proyectos de un solo módulo (ver detalle en HU-19). Fix: separar la ejecución en dos llamadas a `subprocess.run` en `_run_maven()` de `test_runner.py` — una para `mvn test --batch-mode -fae` y otra para `mvn jacoco:report --batch-mode`.
 
 - **Crash por rate limit con Groq:** Con 71 funciones, el retry de 3 intentos para 429 se agotaba a mitad del proceso. Fix: aumentar a 10 reintentos en `llm_client.py`. Los 429 son rate limits temporales, no errores — siempre se resuelven esperando.
 
@@ -1199,6 +1205,8 @@ El tiempo se redujo un 43%. La cobertura subió levemente (61% vs 57%) porque lo
 | examples_java (3 archivos) | Java | Groq | 88 | 58 | 9 | 21 | 56% | 5m 03s |
 | examples_java_large (9 archivos, 37 funciones) | Java | Groq | 0 | 0 | 0 | 0 | — | 20m (compilación fallida) |
 
+> Nota: `examples_py_simple` dio resultados idénticos a `examples` (34/28/84%/5m 34s), confirmando que el fix de imports dotted para repos con subdirectorios no afecta ni degrada el comportamiento en repos planos — ambos casos se resuelven con la misma lógica.
+
 ### Observaciones
 
 - Python es el lenguaje con mejores resultados en cobertura y ratio de tests pasados. La extracción con AST nativo es más precisa que el regex de JS/Java.
@@ -1213,6 +1221,12 @@ El tiempo se redujo un 43%. La cobertura subió levemente (61% vs 57%) porque lo
 - **Repos con dependencias externas:** el agente solo soporta repos que usen la stdlib del lenguaje.
 - **Repos Python con paquetes:** funciona correctamente después del fix de imports dotted, pero los tests de integración entre módulos de distintos paquetes pueden tener imports incorrectos.
 - **Autocorrección en repos grandes:** limitada a 30 tests para evitar tiempos excesivos. Tests con `ImportError` se saltan sin intentar corrección.
+
+---
+
+## HU-17 — Tests End-to-End (oportunidad de mejora)
+
+El profesor Piruzi confirmó que los tests end-to-end quedan como oportunidad de mejora para una iteración futura. El agente actualmente genera tests unitarios y de integración. Tests E2E requerirían ejecutar flujos completos del sistema bajo test (no del agente), lo que implica resolver dependencias del entorno, estado compartido entre tests, y teardown de recursos — un alcance significativamente mayor que el MVP actual.
 
 ---
 
