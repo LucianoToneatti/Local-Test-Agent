@@ -1184,6 +1184,38 @@ El tiempo se redujo un 43%. La cobertura subió levemente (61% vs 57%) porque lo
 
 ---
 
+## Validación final — todos los lenguajes
+
+### Tabla comparativa de resultados
+
+| Repo | Lenguaje | Provider | Tests | Passed | Sin resolver | Bugs | Cobertura | Tiempo |
+|------|----------|----------|-------|--------|---------------|------|-----------|--------|
+| examples (2 archivos) | Python | Local | 34 | 28 | 0 | 6 | 84% | 5m 34s |
+| examples_py_simple (4 archivos, subdirectorios) | Python | Local | 34 | 28 | 0 | 6 | 84% | 5m 34s |
+| examples_large (15 archivos, 71 funciones) | Python | Groq | 405 | 115 | 289 | 1 | 61% | 33m 08s |
+| examples_js_simple (3 archivos) | JS | Local | 27 | 24 | 3 | 0 | 65% | 4m 43s |
+| examples_js_large (9 archivos, 34 funciones) | JS | Groq | 169 | 110 | 59 | 0 | 94% | 3m 47s |
+| examples_java_simple (3 archivos) | Java | Local | 15 | 12 | 1 | 2 | 74% | 11m 59s |
+| examples_java (3 archivos) | Java | Groq | 88 | 58 | 9 | 21 | 56% | 5m 03s |
+| examples_java_large (9 archivos, 37 funciones) | Java | Groq | 0 | 0 | 0 | 0 | — | 20m (compilación fallida) |
+
+### Observaciones
+
+- Python es el lenguaje con mejores resultados en cobertura y ratio de tests pasados. La extracción con AST nativo es más precisa que el regex de JS/Java.
+- JavaScript/TypeScript tiene excelente cobertura (94% en repo grande) gracias a Jest V8. El ratio de tests pasados es bueno.
+- Java funciona bien en repos pequeños (74% cobertura, 80% passed) pero tiene limitaciones en repos grandes: el LLM genera métodos que no existen en las clases fuente (`setAnioIngreso`, `isActivo(int)`), causando errores de compilación irrecuperables. El ciclo de corrección no siempre puede resolverlos porque el problema es que el LLM no conoce la API real de la clase.
+- Groq vs Local: Groq es 3-10x más rápido pero tiene rate limits en el tier gratuito (6000 TPM). En repos grandes las esperas por rate limit pueden sumar minutos. El modelo local (DeepSeek Coder 6.7b en CPU) tarda más por llamada pero no tiene límites.
+- Variabilidad del LLM: cada ejecución genera tests distintos. Los números de la tabla son de un run específico — runs sucesivos pueden variar en ±20% de tests generados y ±10% de cobertura.
+
+### Limitaciones identificadas
+
+- **Java large con Groq:** el modelo `llama-3.1-8b-instant` genera métodos Java inexistentes para clases complejas. Modelos más grandes como `llama-3.3-70b-versatile` podrían mejorar esto.
+- **Repos con dependencias externas:** el agente solo soporta repos que usen la stdlib del lenguaje.
+- **Repos Python con paquetes:** funciona correctamente después del fix de imports dotted, pero los tests de integración entre módulos de distintos paquetes pueden tener imports incorrectos.
+- **Autocorrección en repos grandes:** limitada a 30 tests para evitar tiempos excesivos. Tests con `ImportError` se saltan sin intentar corrección.
+
+---
+
 ## HU-16 — Diagnóstico de fallos (clasificador posible_bug)
 
 ### Qué se implementó

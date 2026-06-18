@@ -74,7 +74,8 @@ def generate(repo_path: str, ast_result: dict, progress_callback=None, client=No
             if blocks:
                 stem = Path(rel_path).stem
                 if language == "javascript":
-                    header = _build_js_import_header(stem, file_info)
+                    js_module_path = Path(rel_path).with_suffix("").as_posix()
+                    header = _build_js_import_header(js_module_path, file_info)
                     out_file = OUTPUT_DIR / f"{stem}.test.js"
                 else:
                     import_path = Path(rel_path).with_suffix("").as_posix().replace("/", ".")
@@ -385,6 +386,8 @@ def _compile_and_fix_java(client: LLMClient, maven_root: Path) -> None:
                 continue
             fixed = _fix_java_file_with_llm(client, content, error_text)
             if fixed:
+                expected_class_name = file_path.stem
+                fixed = re.sub(r'class\s+\w+', f'class {expected_class_name}', fixed, count=1)
                 file_path.write_text(fixed, encoding="utf-8")
 
 
