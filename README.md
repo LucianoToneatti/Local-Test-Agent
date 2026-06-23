@@ -3,98 +3,98 @@
 ```
 +--------------------------------------------------+
 |  Local-Test-Agent v1.0                           |
-|  Generación automática de tests con LLM          |
+|  Automated test generation with LLM              |
 |  Python · JavaScript/TypeScript · Java           |
 +--------------------------------------------------+
 ```
 
-Agente de generación automática de tests unitarios y de integración para repositorios **Python, JavaScript/TypeScript y Java**, impulsado por un LLM local (Ollama) o cloud (Groq). Analiza el código fuente, genera los tests, los ejecuta, autocorrige los fallidos y produce un reporte con cobertura de código.
+Automatic unit and integration test generation agent for **Python, JavaScript/TypeScript, and Java** repositories, powered by a local LLM (Ollama) or cloud LLM (Groq). It analyzes the source code, generates the tests, runs them, auto-fixes the failing ones, and produces a report with code coverage.
 
 ---
 
-## Cómo funciona
+## How it works
 
 ```
-1. ANALIZAR    Explora el repo y extrae funciones, clases y métodos con AST/regex
+1. ANALYZE     Scans the repo and extracts functions, classes, and methods using AST/regex
        ↓
-2. GENERAR     Llama al LLM una vez por función para generar tests unitarios y de integración
+2. GENERATE    Calls the LLM once per function to generate unit and integration tests
        ↓
-3. EJECUTAR    Corre pytest / Jest / Maven y muestra los resultados en tiempo real
+3. RUN         Runs pytest / Jest / Maven and shows results in real time
        ↓
-4. CORREGIR    Reenvía los tests fallidos al LLM con el traceback (hasta 3 intentos)
+4. FIX         Resends failing tests to the LLM with the traceback (up to 3 attempts)
        ↓
-5. REPORTAR    Escribe reporte.md con passed, sin resolver, posibles bugs y cobertura
+5. REPORT      Writes reporte.md with passed, unresolved, possible bugs, and coverage
 ```
 
 ---
 
-## Características
+## Features
 
-- **Multi-lenguaje:** Python (pytest), JavaScript/TypeScript (Jest), Java (JUnit 5 + Maven)
-- **Local-first:** corre con Ollama en tu máquina, sin exponer código a servicios externos
-- **Cloud opcional:** soporte para Groq con los mismos comandos, mucho más rápido
-- **Autocorrección:** los tests fallidos se reenvían al LLM con el traceback; hasta 3 intentos por test
-- **Diagnóstico de bugs:** distingue entre un test con error corregible y un posible bug real en el código
-- **Cobertura:** Python (pytest-cov), JavaScript/TypeScript (Jest V8), Java (JaCoCo 0.8.13)
+- **Multi-language:** Python (pytest), JavaScript/TypeScript (Jest), Java (JUnit 5 + Maven)
+- **Local-first:** runs with Ollama on your machine, without exposing code to external services
+- **Optional cloud:** Groq support with the same commands, much faster
+- **Auto-fix:** failing tests are resent to the LLM with the traceback; up to 3 attempts per test
+- **Bug diagnosis:** distinguishes between a fixable test error and a possible real bug in the code
+- **Coverage:** Python (pytest-cov), JavaScript/TypeScript (Jest V8), Java (JaCoCo 0.8.13)
 
 ---
 
-## Requisitos previos
+## Prerequisites
 
 ### Python 3.11+
 
 ```bash
-python3 --version   # debe mostrar 3.11 o superior
+python3 --version   # should show 3.11 or higher
 ```
 
-Si no tenés Python 3.11, descargalo desde [python.org/downloads](https://www.python.org/downloads/) o con tu gestor de paquetes:
+If you don't have Python 3.11, download it from [python.org/downloads](https://www.python.org/downloads/) or with your package manager:
 
 ```bash
 # Ubuntu/Debian
 sudo apt install python3.11 python3.11-venv
 ```
 
-### Ollama (para modo local)
+### Ollama (for local mode)
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull deepseek-coder:6.7b   # ~3.8 GB
 ```
 
-Verificación:
+Verification:
 
 ```bash
-ollama list   # debe mostrar deepseek-coder:6.7b
+ollama list   # should show deepseek-coder:6.7b
 ```
 
-### Node.js 18+ (solo para repos JS/TS)
+### Node.js 18+ (JS/TS repos only)
 
-Con `nvm` (recomendado):
+With `nvm` (recommended):
 
 ```bash
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 nvm install 18
 nvm use 18
-node --version   # debe mostrar v18 o superior
+node --version   # should show v18 or higher
 ```
 
-O con apt:
+Or with apt:
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
 
-**Jest** debe instalarse dentro del proyecto JS que querés analizar:
+**Jest** must be installed inside the JS project you want to analyze:
 
 ```bash
-cd /ruta/al/repo-js
+cd /path/to/js-repo
 npm install --save-dev jest
 ```
 
-### Java 24 + Maven (solo para repos Java)
+### Java 24 + Maven (Java repos only)
 
-Con SDKMAN (recomendado):
+With SDKMAN (recommended):
 
 ```bash
 curl -s "https://get.sdkman.io" | bash
@@ -103,43 +103,43 @@ source "$HOME/.sdkman/bin/sdkman-init.sh"
 sdk install java 24-open
 sdk install maven 3.9.9
 
-java --version    # debe mostrar Java 24
-mvn --version     # debe mostrar Maven 3.9.x
+java --version    # should show Java 24
+mvn --version     # should show Maven 3.9.x
 ```
 
 ---
 
-## Instalación
+## Installation
 
 ```bash
-git clone <url-del-repo>
+git clone <repo-url>
 cd Local-Test-Agent
 bash install.sh
 ```
 
-El script crea el entorno virtual, instala `pytest` y `pytest-cov`, verifica Ollama y descarga el modelo si no está disponible.
+The script creates the virtual environment, installs `pytest` and `pytest-cov`, checks Ollama, and downloads the model if it isn't available.
 
-### Verificación rápida antes de correr
+### Quick check before running
 
 ```bash
 source venv/bin/activate
 python3 --version       # 3.11+
-ollama list             # deepseek-coder:6.7b presente
-node --version          # v18+ (si vas a analizar JS/TS)
-java --version          # 24 (si vas a analizar Java)
-mvn --version           # 3.9+ (si vas a analizar Java)
+ollama list             # deepseek-coder:6.7b present
+node --version          # v18+ (if analyzing JS/TS)
+java --version          # 24 (if analyzing Java)
+mvn --version           # 3.9+ (if analyzing Java)
 ```
 
 ---
 
-## Uso
+## Usage
 
 ```bash
 source venv/bin/activate
-python3 agent.py --repo ./ruta/al/repositorio
+python3 agent.py --repo ./path/to/repository
 ```
 
-> **Nota:** el repositorio a analizar debe usar solo la biblioteca estándar del lenguaje (sin dependencias externas como pip packages, npm modules o Maven dependencies de terceros).
+> **Note:** the repository being analyzed must use only the language's standard library (no external dependencies such as pip packages, npm modules, or third-party Maven dependencies).
 
 ### Python
 
@@ -153,7 +153,7 @@ python3 agent.py --repo ./examples
 python3 agent.py --repo ./examples_js
 ```
 
-El agente detecta archivos `.js` y `.ts` automáticamente. Asegurate de que Jest esté instalado en el repo (ver Requisitos).
+The agent automatically detects `.js` and `.ts` files. Make sure Jest is installed in the repo (see Prerequisites).
 
 ### Java
 
@@ -161,53 +161,55 @@ El agente detecta archivos `.js` y `.ts` automáticamente. Asegurate de que Jest
 python3 agent.py --repo ./examples_java
 ```
 
-El agente genera un proyecto Maven completo en `tests_generados/unit/` con `pom.xml`, las fuentes copiadas y los tests JUnit 5.
+The agent generates a complete Maven project in `tests_generados/unit/` with `pom.xml`, the copied sources, and the JUnit 5 tests.
 
 ---
 
-## Proveedor cloud: Groq
+## Cloud provider: Groq
 
-Groq es una alternativa cloud que usa la misma interfaz que el modo local, pero puede ser **5-10x más rápida** para repos grandes.
+Groq is a cloud alternative that uses the same interface as local mode, but can be **5-10x faster** for large repos.
 
-### Paso a paso para obtener la API key
+### Step-by-step to get an API key
 
-1. Ir a [console.groq.com](https://console.groq.com) y crear una cuenta gratuita
-2. En el menú izquierdo, ir a **API Keys**
-3. Hacer clic en **Create API Key**, asignarle un nombre y copiar el valor (`gsk_...`)
+1. Go to [console.groq.com](https://console.groq.com) and create a free account
+2. In the left menu, go to **API Keys**
+3. Click **Create API Key**, give it a name, and copy the value (`gsk_...`)
 
-### Configurar y usar
+### Configure and use
 
 ```bash
 export GROQ_API_KEY="gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 python3 agent.py --repo ./examples_java --provider groq
 ```
 
-Para usar un modelo más potente:
+To use a more powerful model:
 
 ```bash
 python3 agent.py --repo ./examples --provider groq --model llama-3.3-70b-versatile
 ```
 
-### Rate limits del tier gratuito
+### Free tier rate limits
 
-El tier gratuito de Groq tiene un límite de **6000 tokens por minuto (TPM)**. El agente maneja automáticamente los errores 429 — si se alcanza el límite, espera el tiempo indicado por Groq y reintenta. Para repos con muchas funciones, esto puede agregar tiempo de espera entre llamadas.
+Groq's free tier has a limit of **6000 tokens per minute (TPM)**. The agent automatically handles 429 errors — if the limit is reached, it waits for the time indicated by Groq and retries. For repos with many functions, this can add wait time between calls.
 
 ---
 
-## Modelos soportados
+## Supported models
 
-| Proveedor | Modelo default | Alternativas |
+| Provider | Default model | Alternatives |
 |-----------|---------------|--------------|
-| Local (Ollama) | `deepseek-coder:6.7b` | cualquier modelo disponible en `ollama list` |
+| Local (Ollama) | `deepseek-coder:6.7b` | any model available in `ollama list` |
 | Cloud (Groq) | `llama-3.1-8b-instant` | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
 
-Cambiá el modelo con `--model nombre-del-modelo` en cualquier modo.
+Change the model with `--model model-name` in any mode.
 
 ---
 
-## Ejemplo de salida
+## Example output
 
-Run completo contra `examples/` con `--provider groq`:
+Full run against `examples/` with `--provider groq`:
+
+> **Note:** the console output below is shown exactly as produced by the agent, which generates its console messages in Spanish — they are not translated at runtime. It is kept here as a faithful reference of the actual output.
 
 ```
 (venv) lucianotoneatti@debianHP:~/Proyectos-CC/TIF/Local-Test-Agent$ python3 agent.py --repo ./examples --provider groq
@@ -319,63 +321,63 @@ v1.0
 
 ---
 
-## Archivos generados
+## Generated files
 
-El agente escribe los tests en `tests_generados/` y el reporte en `reporte.md`:
+The agent writes the tests to `tests_generados/` and the report to `reporte.md`:
 
-**Tests unitarios:**
-- Python: `tests_generados/unit/test_<modulo>.py`
-- JavaScript/TypeScript: `tests_generados/unit/<modulo>.test.js`
-- Java: `tests_generados/unit/src/test/java/<Clase>Test.java`
+**Unit tests:**
+- Python: `tests_generados/unit/test_<module>.py`
+- JavaScript/TypeScript: `tests_generados/unit/<module>.test.js`
+- Java: `tests_generados/unit/src/test/java/<Class>Test.java`
 
-**Tests de integración:**
+**Integration tests:**
 - Python: `tests_generados/integration/test_<a>_<b>.py`
 - JavaScript/TypeScript: `tests_generados/integration/<a>_<b>.test.js`
 - Java: `tests_generados/integration/src/test/java/<A><B>IntegrationTest.java`
 
-**Reporte:** `reporte.md` con fecha, tiempo, cobertura, tabla de resumen, tests fallidos, sin resolver y posibles bugs detectados.
+**Report:** `reporte.md` with date, duration, coverage, summary table, failed tests, unresolved tests, and detected possible bugs.
 
 ---
 
-## Estructura del proyecto
+## Project structure
 
 ```
 Local-Test-Agent/
 ├── agent/
-│   ├── ast_extractor.py         # Extracción de funciones y clases (AST Python, regex JS/Java)
-│   ├── autocorrector.py         # Autocorrección y diagnóstico de posibles bugs
-│   ├── integration_generator.py # Tests de integración (Python, JS/TS, Java)
-│   ├── llm_client.py            # Clientes HTTP para Ollama y Groq
-│   ├── report_generator.py      # Escritura de reporte.md
-│   ├── repo_explorer.py         # Exploración de archivos .py/.js/.ts/.java
-│   ├── terminal_ui.py           # Colores ANSI, barra de progreso, resumen final
-│   ├── test_generator.py        # Tests unitarios (Python, JS/TS, Java)
-│   └── test_runner.py           # pytest / Jest / Maven + parseo de cobertura
+│   ├── ast_extractor.py         # Function and class extraction (Python AST, JS/Java regex)
+│   ├── autocorrector.py         # Auto-fix and possible-bug diagnosis
+│   ├── integration_generator.py # Integration tests (Python, JS/TS, Java)
+│   ├── llm_client.py            # HTTP clients for Ollama and Groq
+│   ├── report_generator.py      # Writes reporte.md
+│   ├── repo_explorer.py         # Explores .py/.js/.ts/.java files
+│   ├── terminal_ui.py           # ANSI colors, progress bar, final summary
+│   ├── test_generator.py        # Unit tests (Python, JS/TS, Java)
+│   └── test_runner.py           # pytest / Jest / Maven + coverage parsing
 ├── prompts/
-│   └── prompt_builder.py        # Templates de prompt por lenguaje y tipo de test
-├── examples/                    # Ejemplo Python: calculadora.py, estadistica.py
-├── examples_js/                 # Ejemplo JS: calculadora.js, estadistica.js
-├── examples_java/               # Ejemplo Java: Calculadora.java, Conversor.java, Estadistica.java
-├── tests/                       # Tests del propio agente
-├── tests_generados/             # Output generado (en .gitignore)
-├── context/                     # Notas de diseño y decisiones técnicas
-├── agent.py                     # Punto de entrada CLI
-├── install.sh                   # Script de instalación
-└── reporte.md                   # Reporte del último run
+│   └── prompt_builder.py        # Prompt templates per language and test type
+├── examples/                    # Python example: calculadora.py, estadistica.py
+├── examples_js/                 # JS example: calculadora.js, estadistica.js
+├── examples_java/               # Java example: Calculadora.java, Conversor.java, Estadistica.java
+├── tests/                       # The agent's own tests
+├── tests_generados/             # Generated output (in .gitignore)
+├── context/                     # Design notes and technical decisions
+├── agent.py                     # CLI entry point
+├── install.sh                   # Installation script
+└── reporte.md                   # Report from the last run
 ```
 
 ---
 
-## Limitaciones conocidas
+## Known limitations
 
-- **Tiempo con modelo local:** el agente llama al LLM una vez por función/método. Un repo con 50 funciones puede tardar 20-40 minutos sin GPU dedicada. Con Groq el mismo repo tarda ~5 minutos (sujeto a rate limits).
-- **Calidad de tests:** los tests son generados por un LLM y pueden tener errores lógicos. Revisarlos antes de incorporarlos a un pipeline de CI.
-- **Cobertura Java con errores de compilación:** si los tests Java no compilan, JaCoCo no genera el reporte y la cobertura queda como N/A.
-- **Tests generados no se versionan:** `tests_generados/` está en `.gitignore`. Cada ejecución sobreescribe los tests anteriores.
-- **Repos sin dependencias externas:** el agente está diseñado para repositorios que usan solo la biblioteca estándar del lenguaje. Si el código fuente importa librerías externas (como `requests`, `pandas`, `express`, `Spring`, etc.), los tests generados fallarán porque esas dependencias no estarán disponibles en el entorno de ejecución de los tests.
+- **Local model runtime:** the agent calls the LLM once per function/method. A repo with 50 functions can take 20-40 minutes without a dedicated GPU. With Groq, the same repo takes ~5 minutes (subject to rate limits).
+- **Test quality:** tests are generated by an LLM and may contain logical errors. Review them before incorporating them into a CI pipeline.
+- **Java coverage with compilation errors:** if the Java tests don't compile, JaCoCo doesn't generate the report and coverage is shown as N/A.
+- **Generated tests are not version-controlled:** `tests_generados/` is in `.gitignore`. Each run overwrites the previous tests.
+- **Repos without external dependencies:** the agent is designed for repositories that use only the language's standard library. If the source code imports external libraries (such as `requests`, `pandas`, `express`, `Spring`, etc.), the generated tests will fail because those dependencies won't be available in the test execution environment.
 
 ---
 
-## Licencia
+## License
 
 MIT
