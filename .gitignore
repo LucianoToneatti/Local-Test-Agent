@@ -63,3 +63,15 @@ tests_generados/
 reporte.md
 agent/reporte.md
 coverage/
+
+# Local example repos (developer testing only, not for the public repo)
+examples/
+examples_js/
+examples_java/
+examples_large/
+examples_js_large/
+examples_java_large/
+examples_py_simple/
+examples_js_simple/
+examples_java_simple/
+examples_library_en/
